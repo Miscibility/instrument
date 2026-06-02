@@ -1,0 +1,59 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O3 -march=native -DNDEBUG"
+      }
+    },
+    {
+      "name": "debug-tidy",
+      "displayName": "Debug with clang-tidy",
+      "inherits": "debug",
+      "cacheVariables": {
+        "ENABLE_CLANG_TIDY": "ON"
+      }
+    },
+    {
+      "name": "release-max",
+      "displayName": "Release (max optimizations)",
+      "description": "If your domain guarantees no NaN or Inf can ever appear, add -ffinite-math-only for additional gains. It lets the compiler eliminate all NaN/Inf guards, but produces silent wrong results if a NaN does appear — use only when you have a proof your inputs are finite.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O3 -march=native -DNDEBUG -fno-math-errno -fno-trapping-math -fno-signed-zeros -fassociative-math -freciprocal-math"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug",       "configurePreset": "debug"       },
+    { "name": "debug-tidy",  "configurePreset": "debug-tidy"  },
+    { "name": "release",     "configurePreset": "release"     },
+    { "name": "release-max", "configurePreset": "release-max" }
+  ],
+  "testPresets": [
+    { "name": "debug",       "configurePreset": "debug",       "output": { "outputOnFailure": true } },
+    { "name": "debug-tidy",  "configurePreset": "debug-tidy",  "output": { "outputOnFailure": true } },
+    { "name": "release",     "configurePreset": "release",     "output": { "outputOnFailure": true } },
+    { "name": "release-max", "configurePreset": "release-max", "output": { "outputOnFailure": true } }
+  ]
+}
