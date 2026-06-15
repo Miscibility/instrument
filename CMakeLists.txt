@@ -54,6 +54,19 @@ if(ENABLE_CLANG_TIDY)
     set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
 endif()
 
+# Google Highway — explicit SIMD backing instrument/vector.hpp. Fetched here (not
+# under tests/) so the whole library, and any consumer of it, links to Highway.
+include(FetchContent)
+set(HWY_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(HWY_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(HWY_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(HWY_ENABLE_CONTRIB ON CACHE BOOL "" FORCE) # contrib math/dot kernels
+FetchContent_Declare(highway
+    GIT_REPOSITORY https://github.com/google/highway.git
+    GIT_TAG 1.4.0
+)
+FetchContent_MakeAvailable(highway)
+
 # Header-only interface library
 add_library(${PROJECT_NAME} INTERFACE)
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
@@ -61,6 +74,13 @@ add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 target_include_directories(${PROJECT_NAME} INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
+)
+
+# Propagate Highway to every consumer; vector.hpp includes its headers. Marked
+# SYSTEM so the project's -Wall -Wextra -Wpedantic do not fire inside Highway.
+target_link_libraries(${PROJECT_NAME} INTERFACE hwy hwy_contrib)
+target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE
+    $<BUILD_INTERFACE:${highway_SOURCE_DIR}>
 )
 
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_23)
