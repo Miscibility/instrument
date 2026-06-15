@@ -299,9 +299,13 @@ template<Scalar T>
  *
  * May write non-zero values into the pad lanes; the caller restores the zero-pad invariant.
  */
-template<Scalar T, class F> void map(T* /*p*/, std::size_t /*cap*/, F /*f*/) noexcept
+template<Scalar T, class F> void map(T* p, std::size_t cap, F f) noexcept
 {
-    throw std::runtime_error{"not implemented"};
+    const hn::ScalableTag<T> d;
+    const std::size_t lanes = hn::Lanes(d);
+    for (std::size_t i = 0; i < cap; i += lanes) {
+        hn::Store(f(d, hn::Load(d, p + i)), d, p + i);
+    }
 }
 
 /**
@@ -317,9 +321,13 @@ template<Scalar T, class F> void map(T* /*p*/, std::size_t /*cap*/, F /*f*/) noe
  * May write non-zero/NaN values into the pad lanes (e.g. `0/0`); the caller restores the
  * zero-pad invariant.
  */
-template<Scalar T, class G> void zip(T* /*y*/, const T* /*x*/, std::size_t /*cap*/, G /*g*/) noexcept
+template<Scalar T, class G> void zip(T* y, const T* x, std::size_t cap, G g) noexcept
 {
-    throw std::runtime_error{"not implemented"};
+    const hn::ScalableTag<T> d;
+    const std::size_t lanes = hn::Lanes(d);
+    for (std::size_t i = 0; i < cap; i += lanes) {
+        hn::Store(g(d, hn::Load(d, y + i), hn::Load(d, x + i)), d, y + i);
+    }
 }
 
 // ---- Storage helpers -------------------------------------------------------
