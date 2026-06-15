@@ -148,10 +148,10 @@ int main()
             check_aligned_and_padded(m.as_vector());
         };
 
-        test("elementwise Hadamard multiply matches a per-element reference") = [] {
+        test("elementwise Hadamard product matches a per-element reference") = [] {
             mi::DenseMatrix<double, 2, 2> m{{1, 2}, {3, 4}};
             mi::DenseMatrix<double, 2, 2> n{{5, 6}, {7, 8}};
-            m.multiply(n); // {{5,12},{21,32}}
+            m.elementwise_product(n); // {{5,12},{21,32}}
             expect(m(0, 0) == 5.0_d);
             expect(m(0, 1) == 12.0_d);
             expect(m(1, 0) == 21.0_d);
@@ -164,7 +164,7 @@ int main()
             mi::DenseMatrix<double> a(2, 3, 1.0);
             mi::DenseMatrix<double> b(3, 2, 1.0);
             expect(throws<std::invalid_argument>([&] { a += b; }));
-            expect(throws<std::invalid_argument>([&] { a.multiply(b); }));
+            expect(throws<std::invalid_argument>([&] { a.elementwise_product(b); }));
             expect(throws<std::invalid_argument>([&] { a.add_scaled(2.0, b); }));
         };
 
