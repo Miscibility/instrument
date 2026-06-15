@@ -11,8 +11,15 @@ Checks: >
   -modernize-use-trailing-return-type,
   -cppcoreguidelines-avoid-magic-numbers,
   -readability-magic-numbers,
+  -readability-identifier-naming,
+  -readability-identifier-length,
   -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
-  -misc-non-private-member-variables-in-classes
+  -cppcoreguidelines-narrowing-conversions,
+  -readability-implicit-bool-conversion,
+  -misc-non-private-member-variables-in-classes,
+  -misc-no-recursion,
+  -bugprone-narrowing-conversion,
+  -bugprone-easily-swappable-parameters
 
 WarningsAsErrors: ""
 HeaderFilterRegex: "include/.*"

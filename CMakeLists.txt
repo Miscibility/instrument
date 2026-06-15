@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(MyProject
+project(Instrument
     VERSION 0.1.0
-    DESCRIPTION "A C++ library"
+    DESCRIPTION "A C++ library containing useful utilities used throughout the Miscibility project"
     LANGUAGES CXX
 )
 
