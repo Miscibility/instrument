@@ -63,7 +63,7 @@ set(HWY_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(HWY_ENABLE_CONTRIB ON CACHE BOOL "" FORCE) # contrib math/dot kernels
 FetchContent_Declare(highway
     GIT_REPOSITORY https://github.com/google/highway.git
-    GIT_TAG 1.2.0
+    GIT_TAG 1.4.0
 )
 FetchContent_MakeAvailable(highway)
 
