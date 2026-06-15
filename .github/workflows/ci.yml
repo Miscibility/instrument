@@ -49,6 +49,21 @@ jobs:
           echo "/home/linuxbrew/.linuxbrew/opt/llvm/bin" >> $GITHUB_PATH
 
       # -----------------------
+      # Install OpenBLAS/LAPACK (CBLAS + LAPACKE) for instrument/matrix.hpp
+      # -----------------------
+      - name: Install OpenBLAS/LAPACK (apt)
+        if: matrix.compiler == 'gcc'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenblas-dev liblapacke-dev
+
+      - name: Install OpenBLAS/LAPACK (brew)
+        if: matrix.compiler == 'clang'
+        run: |
+          brew install openblas lapack
+          echo "CMAKE_PREFIX_PATH=/home/linuxbrew/.linuxbrew/opt/openblas:/home/linuxbrew/.linuxbrew/opt/lapack" >> $GITHUB_ENV
+
+      # -----------------------
       # Configure using preset
       # -----------------------
       - name: Configure CMake (${{ matrix.preset }}, ${{ matrix.compiler }})
