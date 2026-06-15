@@ -110,6 +110,52 @@ template<Scalar T> [[nodiscard]] constexpr std::size_t padded_count(std::size_t 
     return ((n + s - 1) / s) * s;
 }
 
+// ---- BLAS-1 kernels --------------------------------------------------------
+//
+// Explicitly-vectorized numeric kernels operating over the padded capacity
+// `cap`. Each is a single counter-driven loop over `[0, cap)` with no scalar
+// remainder tail, relying on the zero-pad invariant: scale, add_scaled and dot
+// all leave the pad at zero (0*a = 0, 0 + a*0 = 0, 0*0 = 0), so the invariant is
+// self-maintaining for these operations. All are noexcept; the throwing size
+// check lives in the Vector methods, before the kernel call.
+
+/// @internal @brief In place scaling: `p <- a*p` over `[0, cap)`.
+template<Scalar T> void scale(T* /*p*/, std::size_t /*cap*/, T /*a*/) noexcept
+{
+    throw std::runtime_error{"not implemented"};
+}
+
+/// @internal @brief Scaled accumulate (axpy): `y <- y + a*x` over `[0, cap)`.
+template<Scalar T> void add_scaled(T* /*y*/, const T* /*x*/, std::size_t /*cap*/, T /*a*/) noexcept
+{
+    throw std::runtime_error{"not implemented"};
+}
+
+/// @internal @brief Dot product: `Sum a_i*b_i` over `[0, cap)` (MulAdd + ReduceSum).
+template<Scalar T> [[nodiscard]] T dot(const T* /*a*/, const T* /*b*/, std::size_t /*cap*/) noexcept
+{
+    throw std::runtime_error{"not implemented"};
+}
+
+/// @internal @brief Sum of squares: `Sum p_i^2` over `[0, cap)`.
+template<Scalar T> [[nodiscard]] T sum_squares(const T* /*p*/, std::size_t /*cap*/) noexcept
+{
+    throw std::runtime_error{"not implemented"};
+}
+
+/// @internal @brief Sum of magnitudes: `Sum |p_i|` over `[0, cap)`.
+template<Scalar T> [[nodiscard]] T absolute_sum(const T* /*p*/, std::size_t /*cap*/) noexcept
+{
+    throw std::runtime_error{"not implemented"};
+}
+
+/// @internal @brief Index of the largest magnitude element, smallest index on ties.
+template<Scalar T>
+[[nodiscard]] std::size_t index_of_max_magnitude(const T* /*p*/, std::size_t /*cap*/) noexcept
+{
+    throw std::runtime_error{"not implemented"};
+}
+
 // ---- Storage helpers -------------------------------------------------------
 //
 // Two storage strategies, selected by extent. Each exposes the same surface
@@ -403,7 +449,79 @@ public:
     /// @brief ADL swap: exchange the contents of @p a and @p b.
     friend void swap(Vector& a, Vector& b) noexcept { a.swap(b); }
 
+    // -- BLAS-1 numeric operations --------------------------------------------
+
+    /// @brief In place scaling `x <- a*x` (scal). @param a Scale factor. @return *this.
+    Vector& scale(T a) noexcept
+    {
+        (void)a;
+        throw std::runtime_error{"not implemented"};
+    }
+
+    /**
+     * @brief Scaled accumulate `this <- this + a*x` (axpy).
+     * @tparam M Extent of @p x (any matching-size extent is accepted).
+     * @param a Scale factor applied to @p x.
+     * @param x Operand of the same logical size as @c *this.
+     * @return *this.
+     * @throws std::invalid_argument if `x.size() != size()`.
+     */
+    template<std::size_t M> Vector& add_scaled(T a, const Vector<T, M>& x)
+    {
+        (void)a;
+        (void)x;
+        throw std::runtime_error{"not implemented"};
+    }
+
+    /**
+     * @brief Dot product `Sum this_i * other_i` (dot).
+     * @tparam M Extent of @p other (any matching-size extent is accepted).
+     * @param other Operand of the same logical size as @c *this.
+     * @return The dot product.
+     * @throws std::invalid_argument if `other.size() != size()`.
+     */
+    template<std::size_t M> [[nodiscard]] T dot(const Vector<T, M>& other) const
+    {
+        (void)other;
+        throw std::runtime_error{"not implemented"};
+    }
+
+    /// @brief Euclidean (L2) norm `sqrt(Sum this_i^2)` (nrm2). @return The norm.
+    [[nodiscard]] T euclidean_norm() const noexcept { throw std::runtime_error{"not implemented"}; }
+
+    /// @brief Sum of magnitudes `Sum |this_i|` (asum). @return The absolute sum.
+    [[nodiscard]] T absolute_sum() const noexcept { throw std::runtime_error{"not implemented"}; }
+
+    /// @brief Index of the largest magnitude element, smallest index on ties; `size()` when empty (iamax).
+    [[nodiscard]] size_type index_of_max_magnitude() const noexcept
+    {
+        throw std::runtime_error{"not implemented"};
+    }
+
+    /// @brief Largest element magnitude `|at(index_of_max_magnitude())|`. @return The max magnitude.
+    [[nodiscard]] T max_magnitude() const noexcept { throw std::runtime_error{"not implemented"}; }
+
+    // -- convenience operators (built on the kernels above) -------------------
+
+    /// @brief `x <- a*x`. @param a Scale factor. @return *this.
+    Vector& operator*=(T a) noexcept { return scale(a); }
+    /// @brief `x <- (1/a)*x`. @param a Divisor. @return *this.
+    Vector& operator/=(T a) noexcept { return scale(T(1) / a); }
+
+    /// @brief `this <- this + x`. @tparam M Extent of @p x. @param x Operand. @return *this.
+    template<std::size_t M> Vector& operator+=(const Vector<T, M>& x) { return add_scaled(T(1), x); }
+    /// @brief `this <- this - x`. @tparam M Extent of @p x. @param x Operand. @return *this.
+    template<std::size_t M> Vector& operator-=(const Vector<T, M>& x) { return add_scaled(T(-1), x); }
+
 private:
+    /// @brief Throw if @p other differs from this vector's logical size.
+    void check_same_size(size_type other) const
+    {
+        if (other != size()) {
+            throw std::invalid_argument{"miscibility::instrument::Vector size mismatch"};
+        }
+    }
+
     storage store_{}; ///< Storage strategy (heap for dynamic, inline array for static).
 };
 
