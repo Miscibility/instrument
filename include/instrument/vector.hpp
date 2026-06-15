@@ -38,6 +38,15 @@
  * is a single counter-driven loop over `capacity()` that relies on the zero pad (`0` is neutral
  * for these sums and products), so there is no scalar remainder tail.
  *
+ * @par Componentwise transforms
+ * Beyond BLAS-1, Vector applies lane-wise operations in place: abs() / sqrt(), every Highway
+ * transcendental (exp(), exp2(), expm1(), log(), log2(), log10(), log1p(), sin(), cos(), sinh(),
+ * tanh(), asin(), acos(), asinh(), acosh(), atan(), atanh()), the elementwise (Hadamard) binary
+ * ops multiply() / divide(), and the generic apply() escape hatch for any other Highway lane op.
+ * Unlike the BLAS-1 kernels these do not preserve the zero pad on their own (`exp(0) == 1`,
+ * `0/0 == NaN`), so each one re-establishes the invariant with a trailing zero_pad() before
+ * returning -- the caller never has to re-zero, and a following reduction stays correct.
+ *
  * @par Static vs dynamic storage
  * `dynamic` (the default extent) keeps the buffer on the heap and is the recommended choice
  * for anything but small, fixed lengths. A static extent stores the whole padded array inline,
@@ -714,8 +723,17 @@ public:
     /**
      * @brief Generic in place unary lane-wise transform `this_i <- f(this_i)`.
      * @tparam F Highway functor with signature `Vec f(ScalableTag<T> d, Vec v)`.
-     * @param f Lane-wise transform.
-     * @return *this, for chaining.
+     * @param f Lane-wise transform applied to each logical element.
+     * @return `*this`, to allow chaining.
+     *
+     * The escape hatch behind every named transform below: pass any Highway lane operation and
+     * it runs over the whole vector, after which the zero-pad invariant is restored for you (so a
+     * subsequent reduction stays correct even if @p f writes non-zero values into the pad). Use
+     * it for lane ops without a dedicated method.
+     * @code{.cpp}
+     * namespace hn = miscibility::instrument::detail::hn;
+     * v.apply([](auto d, auto x) { return hn::Add(x, hn::Set(d, T(1))); }); // x_i <- x_i + 1
+     * @endcode
      */
     template<class F> Vector& apply(F f) noexcept
     {
@@ -724,115 +742,151 @@ public:
         return *this;
     }
 
-    /// @brief In place `this_i <- |this_i|`. @return *this.
+    /// @brief In place absolute value `this_i <- |this_i|`. @return `*this`, for chaining.
     Vector& abs() noexcept
     {
         return apply([](auto /*d*/, auto v) { return detail::hn::Abs(v); });
     }
 
-    /// @brief In place `this_i <- sqrt(this_i)`. @return *this.
+    /**
+     * @brief In place square root `this_i <- sqrt(this_i)`.
+     * @return `*this`, for chaining.
+     * @note Defined for `this_i >= 0`; a negative element yields NaN (no exception).
+     */
     Vector& sqrt() noexcept
     {
         return apply([](auto /*d*/, auto v) { return detail::hn::Sqrt(v); });
     }
 
-    /// @brief In place `this_i <- exp(this_i)`. @return *this.
+    /// @brief In place natural exponential `this_i <- exp(this_i)`. @return `*this`, for chaining.
     Vector& exp() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Exp(d, v); });
     }
 
-    /// @brief In place `this_i <- 2^this_i`. @return *this.
+    /// @brief In place base-2 exponential `this_i <- 2^this_i`. @return `*this`, for chaining.
     Vector& exp2() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Exp2(d, v); });
     }
 
-    /// @brief In place `this_i <- exp(this_i) - 1`. @return *this.
+    /// @brief In place `this_i <- exp(this_i) - 1`, accurate near zero. @return `*this`, for chaining.
     Vector& expm1() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Expm1(d, v); });
     }
 
-    /// @brief In place natural log `this_i <- log(this_i)`. @return *this.
+    /**
+     * @brief In place natural logarithm `this_i <- log(this_i)`.
+     * @return `*this`, for chaining.
+     * @note Defined for `this_i > 0`; zero yields -infinity and a negative element yields NaN.
+     */
     Vector& log() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Log(d, v); });
     }
 
-    /// @brief In place base-2 log `this_i <- log2(this_i)`. @return *this.
+    /**
+     * @brief In place base-2 logarithm `this_i <- log2(this_i)`.
+     * @return `*this`, for chaining.
+     * @note Defined for `this_i > 0` (see @ref log for the boundary behavior).
+     */
     Vector& log2() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Log2(d, v); });
     }
 
-    /// @brief In place base-10 log `this_i <- log10(this_i)`. @return *this.
+    /**
+     * @brief In place base-10 logarithm `this_i <- log10(this_i)`.
+     * @return `*this`, for chaining.
+     * @note Defined for `this_i > 0` (see @ref log for the boundary behavior).
+     */
     Vector& log10() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Log10(d, v); });
     }
 
-    /// @brief In place `this_i <- log(1 + this_i)`. @return *this.
+    /**
+     * @brief In place `this_i <- log(1 + this_i)`, accurate near zero.
+     * @return `*this`, for chaining.
+     * @note Defined for `this_i > -1`; -1 yields -infinity and anything below yields NaN.
+     */
     Vector& log1p() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Log1p(d, v); });
     }
 
-    /// @brief In place `this_i <- sin(this_i)`. @return *this.
+    /// @brief In place sine (radians) `this_i <- sin(this_i)`. @return `*this`, for chaining.
     Vector& sin() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Sin(d, v); });
     }
 
-    /// @brief In place `this_i <- cos(this_i)`. @return *this.
+    /// @brief In place cosine (radians) `this_i <- cos(this_i)`. @return `*this`, for chaining.
     Vector& cos() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Cos(d, v); });
     }
 
-    /// @brief In place `this_i <- sinh(this_i)`. @return *this.
+    /// @brief In place hyperbolic sine `this_i <- sinh(this_i)`. @return `*this`, for chaining.
     Vector& sinh() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Sinh(d, v); });
     }
 
-    /// @brief In place `this_i <- tanh(this_i)`. @return *this.
+    /// @brief In place hyperbolic tangent `this_i <- tanh(this_i)`. @return `*this`, for chaining.
     Vector& tanh() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Tanh(d, v); });
     }
 
-    /// @brief In place `this_i <- asin(this_i)`. @return *this.
+    /**
+     * @brief In place arc sine (radians) `this_i <- asin(this_i)`.
+     * @return `*this`, for chaining.
+     * @note Defined for `this_i` in `[-1, 1]`; outside that range yields NaN.
+     */
     Vector& asin() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Asin(d, v); });
     }
 
-    /// @brief In place `this_i <- acos(this_i)`. @return *this.
+    /**
+     * @brief In place arc cosine (radians) `this_i <- acos(this_i)`.
+     * @return `*this`, for chaining.
+     * @note Defined for `this_i` in `[-1, 1]`; outside that range yields NaN.
+     */
     Vector& acos() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Acos(d, v); });
     }
 
-    /// @brief In place `this_i <- asinh(this_i)`. @return *this.
+    /// @brief In place inverse hyperbolic sine `this_i <- asinh(this_i)`. @return `*this`, for chaining.
     Vector& asinh() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Asinh(d, v); });
     }
 
-    /// @brief In place `this_i <- acosh(this_i)`. @return *this.
+    /**
+     * @brief In place inverse hyperbolic cosine `this_i <- acosh(this_i)`.
+     * @return `*this`, for chaining.
+     * @note Defined for `this_i >= 1`; below 1 yields NaN.
+     */
     Vector& acosh() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Acosh(d, v); });
     }
 
-    /// @brief In place `this_i <- atan(this_i)`. @return *this.
+    /// @brief In place arc tangent (radians) `this_i <- atan(this_i)`. @return `*this`, for chaining.
     Vector& atan() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Atan(d, v); });
     }
 
-    /// @brief In place `this_i <- atanh(this_i)`. @return *this.
+    /**
+     * @brief In place inverse hyperbolic tangent `this_i <- atanh(this_i)`.
+     * @return `*this`, for chaining.
+     * @note Defined for `this_i` in `(-1, 1)`; +/-1 yields +/-infinity and outside yields NaN.
+     */
     Vector& atanh() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Atanh(d, v); });
