@@ -71,8 +71,9 @@
 #include <type_traits>
 #include <utility>
 
-#include <hwy/aligned_allocator.h> // HWY_ALIGNMENT
-#include <hwy/highway.h>           // static dispatch: ScalableTag / Lanes
+#include <hwy/aligned_allocator.h>     // HWY_ALIGNMENT
+#include <hwy/highway.h>               // static dispatch: ScalableTag / Lanes
+#include <hwy/contrib/math/math-inl.h> // transcendental lane ops: Exp, Log, Sin, ...
 
 /// @namespace miscibility::instrument
 /// @brief Instrument library for the Miscibility project; this header adds an aligned vector.
@@ -276,6 +277,49 @@ template<Scalar T>
     const auto sentinel = hn::Set(du, std::numeric_limits<TU>::max());
     const auto candidates = hn::IfThenElse(holds_max, best_idx, sentinel);
     return static_cast<std::size_t>(hn::ReduceMin(du, candidates));
+}
+
+// ---- Componentwise kernels -------------------------------------------------
+//
+// Lane-wise transform kernels operating over the padded capacity `cap`. Each is
+// a single counter-driven loop over `[0, cap)` with no scalar remainder tail.
+// Unlike the BLAS-1 kernels these are NOT self-maintaining for the zero-pad
+// invariant (e.g. exp(0) = 1, 0/0 = NaN), so the calling Vector method runs a
+// trailing zero_pad(). The kernels themselves are noexcept; the throwing
+// size-check for the binary kernel lives in the Vector method, before the call.
+
+/**
+ * @internal
+ * @brief Apply a SIMD functor lane-wise in place: `p[i] <- f(d, p[i])` over `[0, cap)`.
+ * @tparam T Element type.
+ * @tparam F Highway functor with signature `Vec f(ScalableTag<T> d, Vec v)`.
+ * @param p   Buffer to transform; written in place. Must hold @p cap elements.
+ * @param cap Padded element count (a whole multiple of the lane count).
+ * @param f   Lane-wise transform applied to each loaded vector.
+ *
+ * May write non-zero values into the pad lanes; the caller restores the zero-pad invariant.
+ */
+template<Scalar T, class F> void map(T* /*p*/, std::size_t /*cap*/, F /*f*/) noexcept
+{
+    throw std::runtime_error{"not implemented"};
+}
+
+/**
+ * @internal
+ * @brief Binary lane-wise transform in place: `y[i] <- g(d, y[i], x[i])` over `[0, cap)`.
+ * @tparam T Element type.
+ * @tparam G Highway functor with signature `Vec g(ScalableTag<T> d, Vec y, Vec x)`.
+ * @param y   Destination operand; written in place. Must hold @p cap elements.
+ * @param x   Source operand. Must hold @p cap elements.
+ * @param cap Padded element count (a whole multiple of the lane count).
+ * @param g   Lane-wise binary transform.
+ *
+ * May write non-zero/NaN values into the pad lanes (e.g. `0/0`); the caller restores the
+ * zero-pad invariant.
+ */
+template<Scalar T, class G> void zip(T* /*y*/, const T* /*x*/, std::size_t /*cap*/, G /*g*/) noexcept
+{
+    throw std::runtime_error{"not implemented"};
 }
 
 // ---- Storage helpers -------------------------------------------------------
@@ -649,6 +693,176 @@ public:
     [[nodiscard]] T max_magnitude() const noexcept
     {
         return std::abs(data()[index_of_max_magnitude()]);
+    }
+
+    // -- componentwise transforms ---------------------------------------------
+    //
+    // Each transform computes over the full capacity() (branchless, no
+    // remainder) and then calls zero_pad() as its final step, so the zero-pad
+    // invariant holds after every public mutating call -- even for transforms
+    // that break it mid-flight (exp(0) = 1; 0/0 = NaN). Reductions can therefore
+    // stay simple counter-driven loops with no masking.
+
+    /**
+     * @brief Generic in place unary lane-wise transform `this_i <- f(this_i)`.
+     * @tparam F Highway functor with signature `Vec f(ScalableTag<T> d, Vec v)`.
+     * @param f Lane-wise transform.
+     * @return *this, for chaining.
+     */
+    template<class F> Vector& apply(F f) noexcept
+    {
+        detail::map<T>(data(), capacity(), f);
+        zero_pad();
+        return *this;
+    }
+
+    /// @brief In place `this_i <- |this_i|`. @return *this.
+    Vector& abs() noexcept
+    {
+        return apply([](auto /*d*/, auto v) { return detail::hn::Abs(v); });
+    }
+
+    /// @brief In place `this_i <- sqrt(this_i)`. @return *this.
+    Vector& sqrt() noexcept
+    {
+        return apply([](auto /*d*/, auto v) { return detail::hn::Sqrt(v); });
+    }
+
+    /// @brief In place `this_i <- exp(this_i)`. @return *this.
+    Vector& exp() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Exp(d, v); });
+    }
+
+    /// @brief In place `this_i <- 2^this_i`. @return *this.
+    Vector& exp2() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Exp2(d, v); });
+    }
+
+    /// @brief In place `this_i <- exp(this_i) - 1`. @return *this.
+    Vector& expm1() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Expm1(d, v); });
+    }
+
+    /// @brief In place natural log `this_i <- log(this_i)`. @return *this.
+    Vector& log() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Log(d, v); });
+    }
+
+    /// @brief In place base-2 log `this_i <- log2(this_i)`. @return *this.
+    Vector& log2() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Log2(d, v); });
+    }
+
+    /// @brief In place base-10 log `this_i <- log10(this_i)`. @return *this.
+    Vector& log10() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Log10(d, v); });
+    }
+
+    /// @brief In place `this_i <- log(1 + this_i)`. @return *this.
+    Vector& log1p() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Log1p(d, v); });
+    }
+
+    /// @brief In place `this_i <- sin(this_i)`. @return *this.
+    Vector& sin() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Sin(d, v); });
+    }
+
+    /// @brief In place `this_i <- cos(this_i)`. @return *this.
+    Vector& cos() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Cos(d, v); });
+    }
+
+    /// @brief In place `this_i <- sinh(this_i)`. @return *this.
+    Vector& sinh() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Sinh(d, v); });
+    }
+
+    /// @brief In place `this_i <- tanh(this_i)`. @return *this.
+    Vector& tanh() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Tanh(d, v); });
+    }
+
+    /// @brief In place `this_i <- asin(this_i)`. @return *this.
+    Vector& asin() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Asin(d, v); });
+    }
+
+    /// @brief In place `this_i <- acos(this_i)`. @return *this.
+    Vector& acos() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Acos(d, v); });
+    }
+
+    /// @brief In place `this_i <- asinh(this_i)`. @return *this.
+    Vector& asinh() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Asinh(d, v); });
+    }
+
+    /// @brief In place `this_i <- acosh(this_i)`. @return *this.
+    Vector& acosh() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Acosh(d, v); });
+    }
+
+    /// @brief In place `this_i <- atan(this_i)`. @return *this.
+    Vector& atan() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Atan(d, v); });
+    }
+
+    /// @brief In place `this_i <- atanh(this_i)`. @return *this.
+    Vector& atanh() noexcept
+    {
+        return apply([](auto d, auto v) { return detail::hn::Atanh(d, v); });
+    }
+
+    /**
+     * @brief In place Hadamard (elementwise) product `this_i <- this_i * x_i`.
+     * @tparam M Extent of @p x (any matching-size extent is accepted).
+     * @param x Operand of the same logical size as @c *this.
+     * @return *this.
+     * @throws std::invalid_argument if `x.size() != size()`.
+     */
+    template<std::size_t M> Vector& multiply(const Vector<T, M>& x)
+    {
+        check_same_size(x.size());
+        detail::zip<T>(data(), x.data(), capacity(),
+                       [](auto /*d*/, auto y, auto v) { return detail::hn::Mul(y, v); });
+        zero_pad();
+        return *this;
+    }
+
+    /**
+     * @brief In place elementwise division `this_i <- this_i / x_i`.
+     * @tparam M Extent of @p x (any matching-size extent is accepted).
+     * @param x Operand of the same logical size as @c *this.
+     * @return *this.
+     * @throws std::invalid_argument if `x.size() != size()`.
+     *
+     * The pad lanes transiently compute `0/0 = NaN`; the trailing zero_pad() scrubs them before
+     * any reduction sees them.
+     */
+    template<std::size_t M> Vector& divide(const Vector<T, M>& x)
+    {
+        check_same_size(x.size());
+        detail::zip<T>(data(), x.data(), capacity(),
+                       [](auto /*d*/, auto y, auto v) { return detail::hn::Div(y, v); });
+        zero_pad();
+        return *this;
     }
 
     // -- convenience operators (built on the kernels above) -------------------
