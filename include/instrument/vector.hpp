@@ -46,8 +46,10 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <initializer_list>
+#include <limits>
 #include <new>
 #include <span>
 #include <stdexcept>
@@ -120,40 +122,97 @@ template<Scalar T> [[nodiscard]] constexpr std::size_t padded_count(std::size_t 
 // check lives in the Vector methods, before the kernel call.
 
 /// @internal @brief In place scaling: `p <- a*p` over `[0, cap)`.
-template<Scalar T> void scale(T* /*p*/, std::size_t /*cap*/, T /*a*/) noexcept
+template<Scalar T> void scale(T* p, std::size_t cap, T a) noexcept
 {
-    throw std::runtime_error{"not implemented"};
+    const hn::ScalableTag<T> d;
+    const std::size_t lanes = hn::Lanes(d);
+    const auto va = hn::Set(d, a);
+    for (std::size_t i = 0; i < cap; i += lanes) {
+        hn::Store(hn::Mul(hn::Load(d, p + i), va), d, p + i);
+    }
 }
 
 /// @internal @brief Scaled accumulate (axpy): `y <- y + a*x` over `[0, cap)`.
-template<Scalar T> void add_scaled(T* /*y*/, const T* /*x*/, std::size_t /*cap*/, T /*a*/) noexcept
+template<Scalar T> void add_scaled(T* y, const T* x, std::size_t cap, T a) noexcept
 {
-    throw std::runtime_error{"not implemented"};
+    const hn::ScalableTag<T> d;
+    const std::size_t lanes = hn::Lanes(d);
+    const auto va = hn::Set(d, a);
+    for (std::size_t i = 0; i < cap; i += lanes) {
+        const auto vy = hn::Load(d, y + i);
+        const auto vx = hn::Load(d, x + i);
+        hn::Store(hn::MulAdd(va, vx, vy), d, y + i); // a*x + y
+    }
 }
 
 /// @internal @brief Dot product: `Sum a_i*b_i` over `[0, cap)` (MulAdd + ReduceSum).
-template<Scalar T> [[nodiscard]] T dot(const T* /*a*/, const T* /*b*/, std::size_t /*cap*/) noexcept
+template<Scalar T> [[nodiscard]] T dot(const T* a, const T* b, std::size_t cap) noexcept
 {
-    throw std::runtime_error{"not implemented"};
+    const hn::ScalableTag<T> d;
+    const std::size_t lanes = hn::Lanes(d);
+    auto acc = hn::Zero(d);
+    for (std::size_t i = 0; i < cap; i += lanes) {
+        acc = hn::MulAdd(hn::Load(d, a + i), hn::Load(d, b + i), acc);
+    }
+    return hn::ReduceSum(d, acc);
 }
 
 /// @internal @brief Sum of squares: `Sum p_i^2` over `[0, cap)`.
-template<Scalar T> [[nodiscard]] T sum_squares(const T* /*p*/, std::size_t /*cap*/) noexcept
+template<Scalar T> [[nodiscard]] T sum_squares(const T* p, std::size_t cap) noexcept
 {
-    throw std::runtime_error{"not implemented"};
+    const hn::ScalableTag<T> d;
+    const std::size_t lanes = hn::Lanes(d);
+    auto acc = hn::Zero(d);
+    for (std::size_t i = 0; i < cap; i += lanes) {
+        const auto v = hn::Load(d, p + i);
+        acc = hn::MulAdd(v, v, acc);
+    }
+    return hn::ReduceSum(d, acc);
 }
 
 /// @internal @brief Sum of magnitudes: `Sum |p_i|` over `[0, cap)`.
-template<Scalar T> [[nodiscard]] T absolute_sum(const T* /*p*/, std::size_t /*cap*/) noexcept
+template<Scalar T> [[nodiscard]] T absolute_sum(const T* p, std::size_t cap) noexcept
 {
-    throw std::runtime_error{"not implemented"};
+    const hn::ScalableTag<T> d;
+    const std::size_t lanes = hn::Lanes(d);
+    auto acc = hn::Zero(d);
+    for (std::size_t i = 0; i < cap; i += lanes) {
+        acc = hn::Add(acc, hn::Abs(hn::Load(d, p + i)));
+    }
+    return hn::ReduceSum(d, acc);
 }
 
 /// @internal @brief Index of the largest magnitude element, smallest index on ties.
+///
+/// Per lane, the running max is updated only on a strict `>` and indices are scanned in
+/// increasing order, so the smallest index wins a tie within a column. The horizontal step
+/// then takes the smallest index among the lanes holding the overall maximum magnitude. Pad
+/// lanes are zero and the update is strict, so a pad slot can never displace a real element;
+/// for an all-zero input every lane keeps its initial `Iota` index and the result is 0.
 template<Scalar T>
-[[nodiscard]] std::size_t index_of_max_magnitude(const T* /*p*/, std::size_t /*cap*/) noexcept
+[[nodiscard]] std::size_t index_of_max_magnitude(const T* p, std::size_t cap) noexcept
 {
-    throw std::runtime_error{"not implemented"};
+    const hn::ScalableTag<T> d;
+    const hn::RebindToUnsigned<decltype(d)> du;
+    using TU = hn::TFromD<decltype(du)>;
+    const std::size_t lanes = hn::Lanes(d);
+
+    auto best_mag = hn::Zero(d);
+    auto best_idx = hn::Iota(du, 0); // {0, 1, ..., lanes-1}
+    for (std::size_t i = 0; i < cap; i += lanes) {
+        const auto mag = hn::Abs(hn::Load(d, p + i));
+        const auto idx = hn::Iota(du, static_cast<TU>(i)); // {i, i+1, ...}
+        const auto greater = hn::Gt(mag, best_mag);        // strict: ties keep the lower index
+        best_mag = hn::IfThenElse(greater, mag, best_mag);
+        best_idx = hn::IfThenElse(hn::RebindMask(du, greater), idx, best_idx);
+    }
+
+    // Horizontal: smallest index among lanes that hold the overall max magnitude.
+    const auto max_mag = hn::Set(d, hn::ReduceMax(d, best_mag));
+    const auto holds_max = hn::RebindMask(du, hn::Eq(best_mag, max_mag));
+    const auto sentinel = hn::Set(du, std::numeric_limits<TU>::max());
+    const auto candidates = hn::IfThenElse(holds_max, best_idx, sentinel);
+    return static_cast<std::size_t>(hn::ReduceMin(du, candidates));
 }
 
 // ---- Storage helpers -------------------------------------------------------
@@ -454,8 +513,8 @@ public:
     /// @brief In place scaling `x <- a*x` (scal). @param a Scale factor. @return *this.
     Vector& scale(T a) noexcept
     {
-        (void)a;
-        throw std::runtime_error{"not implemented"};
+        detail::scale<T>(data(), capacity(), a);
+        return *this;
     }
 
     /**
@@ -468,9 +527,9 @@ public:
      */
     template<std::size_t M> Vector& add_scaled(T a, const Vector<T, M>& x)
     {
-        (void)a;
-        (void)x;
-        throw std::runtime_error{"not implemented"};
+        check_same_size(x.size());
+        detail::add_scaled<T>(data(), x.data(), capacity(), a);
+        return *this;
     }
 
     /**
@@ -482,24 +541,36 @@ public:
      */
     template<std::size_t M> [[nodiscard]] T dot(const Vector<T, M>& other) const
     {
-        (void)other;
-        throw std::runtime_error{"not implemented"};
+        check_same_size(other.size());
+        return detail::dot<T>(data(), other.data(), capacity());
     }
 
     /// @brief Euclidean (L2) norm `sqrt(Sum this_i^2)` (nrm2). @return The norm.
-    [[nodiscard]] T euclidean_norm() const noexcept { throw std::runtime_error{"not implemented"}; }
+    [[nodiscard]] T euclidean_norm() const noexcept
+    {
+        return std::sqrt(detail::sum_squares<T>(data(), capacity()));
+    }
 
     /// @brief Sum of magnitudes `Sum |this_i|` (asum). @return The absolute sum.
-    [[nodiscard]] T absolute_sum() const noexcept { throw std::runtime_error{"not implemented"}; }
+    [[nodiscard]] T absolute_sum() const noexcept
+    {
+        return detail::absolute_sum<T>(data(), capacity());
+    }
 
     /// @brief Index of the largest magnitude element, smallest index on ties; `size()` when empty (iamax).
     [[nodiscard]] size_type index_of_max_magnitude() const noexcept
     {
-        throw std::runtime_error{"not implemented"};
+        if (empty()) {
+            return size(); // no element
+        }
+        return detail::index_of_max_magnitude<T>(data(), capacity());
     }
 
     /// @brief Largest element magnitude `|at(index_of_max_magnitude())|`. @return The max magnitude.
-    [[nodiscard]] T max_magnitude() const noexcept { throw std::runtime_error{"not implemented"}; }
+    [[nodiscard]] T max_magnitude() const noexcept
+    {
+        return std::abs(data()[index_of_max_magnitude()]);
+    }
 
     // -- convenience operators (built on the kernels above) -------------------
 
