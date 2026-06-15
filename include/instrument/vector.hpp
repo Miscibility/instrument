@@ -23,6 +23,21 @@
  * fill() establish it; zero_pad() restores it after any operation that may write non-zero
  * values into the pad (e.g. a future componentwise `exp`, where `exp(0) == 1`).
  *
+ * @par BLAS-1 operations
+ * Vector exposes explicitly-vectorized BLAS-1 kernels under plain-language names (the classic
+ * BLAS mnemonic is given in parentheses):
+ * - scale() / `*=` / `/=` (scal): `x <- a*x`.
+ * - add_scaled() / `+=` / `-=` (axpy): `this <- this + a*x`.
+ * - dot() (dot): inner product.
+ * - euclidean_norm() (nrm2): `sqrt(Sum x_i^2)`.
+ * - absolute_sum() (asum): `Sum |x_i|`.
+ * - index_of_max_magnitude() (iamax) and max_magnitude(): argmax `|x_i|` and its magnitude.
+ *
+ * `dot` and `add_scaled` accept an operand of any extent (static or dynamic); only logical
+ * `size()` equality is required, and a mismatch throws `std::invalid_argument`. Each reduction
+ * is a single counter-driven loop over `capacity()` that relies on the zero pad (`0` is neutral
+ * for these sums and products), so there is no scalar remainder tail.
+ *
  * @par Static vs dynamic storage
  * `dynamic` (the default extent) keeps the buffer on the heap and is the recommended choice
  * for anything but small, fixed lengths. A static extent stores the whole padded array inline,
@@ -121,7 +136,16 @@ template<Scalar T> [[nodiscard]] constexpr std::size_t padded_count(std::size_t 
 // self-maintaining for these operations. All are noexcept; the throwing size
 // check lives in the Vector methods, before the kernel call.
 
-/// @internal @brief In place scaling: `p <- a*p` over `[0, cap)`.
+/**
+ * @internal
+ * @brief In place scaling `p <- a*p` over `[0, cap)`.
+ * @tparam T Element type.
+ * @param p   Buffer to scale; written in place. Must hold @p cap elements.
+ * @param cap Padded element count (a whole multiple of the lane count).
+ * @param a   Scale factor.
+ *
+ * The pad stays zero (`a * 0 == 0`), so the zero-pad invariant is self-maintaining.
+ */
 template<Scalar T> void scale(T* p, std::size_t cap, T a) noexcept
 {
     const hn::ScalableTag<T> d;
@@ -132,7 +156,17 @@ template<Scalar T> void scale(T* p, std::size_t cap, T a) noexcept
     }
 }
 
-/// @internal @brief Scaled accumulate (axpy): `y <- y + a*x` over `[0, cap)`.
+/**
+ * @internal
+ * @brief Scaled accumulate (axpy) `y <- y + a*x` over `[0, cap)`.
+ * @tparam T Element type.
+ * @param y   Destination/accumulator; written in place. Must hold @p cap elements.
+ * @param x   Source operand. Must hold @p cap elements.
+ * @param cap Padded element count (a whole multiple of the lane count).
+ * @param a   Scale factor applied to @p x.
+ *
+ * Both pads are zero, so the result's pad stays zero (`0 + a * 0 == 0`).
+ */
 template<Scalar T> void add_scaled(T* y, const T* x, std::size_t cap, T a) noexcept
 {
     const hn::ScalableTag<T> d;
@@ -145,7 +179,15 @@ template<Scalar T> void add_scaled(T* y, const T* x, std::size_t cap, T a) noexc
     }
 }
 
-/// @internal @brief Dot product: `Sum a_i*b_i` over `[0, cap)` (MulAdd + ReduceSum).
+/**
+ * @internal
+ * @brief Dot product `Sum a_i*b_i` over `[0, cap)` (fused `MulAdd` then `ReduceSum`).
+ * @tparam T Element type.
+ * @param a   First operand. Must hold @p cap elements.
+ * @param b   Second operand. Must hold @p cap elements.
+ * @param cap Padded element count (a whole multiple of the lane count).
+ * @return The dot product. Pad lanes contribute `0 * 0 == 0`, so they do not affect the sum.
+ */
 template<Scalar T> [[nodiscard]] T dot(const T* a, const T* b, std::size_t cap) noexcept
 {
     const hn::ScalableTag<T> d;
@@ -157,7 +199,14 @@ template<Scalar T> [[nodiscard]] T dot(const T* a, const T* b, std::size_t cap) 
     return hn::ReduceSum(d, acc);
 }
 
-/// @internal @brief Sum of squares: `Sum p_i^2` over `[0, cap)`.
+/**
+ * @internal
+ * @brief Sum of squares `Sum p_i^2` over `[0, cap)`.
+ * @tparam T Element type.
+ * @param p   Operand. Must hold @p cap elements.
+ * @param cap Padded element count (a whole multiple of the lane count).
+ * @return The sum of squares (zero pad lanes contribute nothing); square-root it for the L2 norm.
+ */
 template<Scalar T> [[nodiscard]] T sum_squares(const T* p, std::size_t cap) noexcept
 {
     const hn::ScalableTag<T> d;
@@ -170,7 +219,14 @@ template<Scalar T> [[nodiscard]] T sum_squares(const T* p, std::size_t cap) noex
     return hn::ReduceSum(d, acc);
 }
 
-/// @internal @brief Sum of magnitudes: `Sum |p_i|` over `[0, cap)`.
+/**
+ * @internal
+ * @brief Sum of magnitudes `Sum |p_i|` over `[0, cap)`.
+ * @tparam T Element type.
+ * @param p   Operand. Must hold @p cap elements.
+ * @param cap Padded element count (a whole multiple of the lane count).
+ * @return The absolute sum (zero pad lanes contribute `|0| == 0`).
+ */
 template<Scalar T> [[nodiscard]] T absolute_sum(const T* p, std::size_t cap) noexcept
 {
     const hn::ScalableTag<T> d;
@@ -182,13 +238,20 @@ template<Scalar T> [[nodiscard]] T absolute_sum(const T* p, std::size_t cap) noe
     return hn::ReduceSum(d, acc);
 }
 
-/// @internal @brief Index of the largest magnitude element, smallest index on ties.
-///
-/// Per lane, the running max is updated only on a strict `>` and indices are scanned in
-/// increasing order, so the smallest index wins a tie within a column. The horizontal step
-/// then takes the smallest index among the lanes holding the overall maximum magnitude. Pad
-/// lanes are zero and the update is strict, so a pad slot can never displace a real element;
-/// for an all-zero input every lane keeps its initial `Iota` index and the result is 0.
+/**
+ * @internal
+ * @brief Index of the largest-magnitude element, smallest index on ties.
+ * @tparam T Element type.
+ * @param p   Operand. Must hold @p cap elements; assumed non-empty by the caller.
+ * @param cap Padded element count (a whole multiple of the lane count).
+ * @return A logical index in `[0, cap)`; in practice always `< size()`.
+ *
+ * Per lane, the running max is updated only on a strict `>` and indices are scanned in
+ * increasing order, so the smallest index wins a tie within a column. The horizontal step
+ * then takes the smallest index among the lanes holding the overall maximum magnitude. Pad
+ * lanes are zero and the update is strict, so a pad slot can never displace a real element;
+ * for an all-zero input every lane keeps its initial `Iota` index and the result is 0.
+ */
 template<Scalar T>
 [[nodiscard]] std::size_t index_of_max_magnitude(const T* p, std::size_t cap) noexcept
 {
@@ -510,7 +573,13 @@ public:
 
     // -- BLAS-1 numeric operations --------------------------------------------
 
-    /// @brief In place scaling `x <- a*x` (scal). @param a Scale factor. @return *this.
+    /**
+     * @brief In place scaling `x <- a*x` (scal).
+     * @param a Scale factor.
+     * @return `*this`, to allow chaining.
+     *
+     * The zero-pad invariant is preserved (`a * 0 == 0`).
+     */
     Vector& scale(T a) noexcept
     {
         detail::scale<T>(data(), capacity(), a);
@@ -557,7 +626,11 @@ public:
         return detail::absolute_sum<T>(data(), capacity());
     }
 
-    /// @brief Index of the largest magnitude element, smallest index on ties; `size()` when empty (iamax).
+    /**
+     * @brief Index of the largest-magnitude element (iamax).
+     * @return The index of the element with the greatest `|this_i|`; the smallest such index on
+     *         ties. Returns `size()` for an empty vector (no element exists).
+     */
     [[nodiscard]] size_type index_of_max_magnitude() const noexcept
     {
         if (empty()) {
@@ -566,7 +639,13 @@ public:
         return detail::index_of_max_magnitude<T>(data(), capacity());
     }
 
-    /// @brief Largest element magnitude `|at(index_of_max_magnitude())|`. @return The max magnitude.
+    /**
+     * @brief Largest element magnitude, `|element at index_of_max_magnitude()|` (related to iamax).
+     * @return The maximum `|this_i|`; `T{}` (zero) for an empty vector.
+     *
+     * For an empty vector index_of_max_magnitude() returns `size()`; reading that neutral pad
+     * slot yields zero, so this stays `noexcept` rather than throwing as `at(size())` would.
+     */
     [[nodiscard]] T max_magnitude() const noexcept
     {
         return std::abs(data()[index_of_max_magnitude()]);
