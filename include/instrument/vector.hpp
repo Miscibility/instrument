@@ -42,7 +42,8 @@
  * Beyond BLAS-1, Vector applies lane-wise operations in place: abs() / sqrt(), every Highway
  * transcendental (exp(), exp2(), expm1(), log(), log2(), log10(), log1p(), sin(), cos(), sinh(),
  * tanh(), asin(), acos(), asinh(), acosh(), atan(), atanh()), the elementwise (Hadamard) binary
- * ops multiply() / divide(), and the generic apply() escape hatch for any other Highway lane op.
+ * ops elementwise_product() / elementwise_quotient(), and the generic apply() escape hatch for
+ * any other Highway lane op.
  * Unlike the BLAS-1 kernels these do not preserve the zero pad on their own (`exp(0) == 1`,
  * `0/0 == NaN`), so each one re-establishes the invariant with a trailing zero_pad() before
  * returning -- the caller never has to re-zero, and a following reduction stays correct.
@@ -899,7 +900,7 @@ public:
      * @return *this.
      * @throws std::invalid_argument if `x.size() != size()`.
      */
-    template<std::size_t M> Vector& multiply(const Vector<T, M>& x)
+    template<std::size_t M> Vector& elementwise_product(const Vector<T, M>& x)
     {
         check_same_size(x.size());
         detail::zip<T>(data(), x.data(), capacity(),
@@ -918,7 +919,7 @@ public:
      * The pad lanes transiently compute `0/0 = NaN`; the trailing zero_pad() scrubs them before
      * any reduction sees them.
      */
-    template<std::size_t M> Vector& divide(const Vector<T, M>& x)
+    template<std::size_t M> Vector& elementwise_quotient(const Vector<T, M>& x)
     {
         check_same_size(x.size());
         detail::zip<T>(data(), x.data(), capacity(),

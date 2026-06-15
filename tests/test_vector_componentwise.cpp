@@ -221,32 +221,32 @@ int main()
                 [](double x) { return x + 1.0; });
         };
 
-        // -- multiply (Hadamard) ----------------------------------------------
+        // -- elementwise_product (Hadamard) -----------------------------------
 
-        test("multiply (Hadamard): x_i == ref_x_i * ref_y_i; pad zero") = [] {
+        test("elementwise_product (Hadamard): x_i == ref_x_i * ref_y_i; pad zero") = [] {
             mi::Vector<double, 17> x{}, y{};
             for (int i = 0; i < 17; ++i) {
                 x[static_cast<std::size_t>(i)] = static_cast<double>(i - 8);
                 y[static_cast<std::size_t>(i)] = static_cast<double>((i * 3 % 7) - 3);
             }
             std::vector<double> rx(x.begin(), x.end()), ry(y.begin(), y.end());
-            x.multiply(y);
+            x.elementwise_product(y);
             for (std::size_t i = 0; i < rx.size(); ++i) {
                 expect(close(x[i], rx[i] * ry[i]));
             }
             check_aligned_and_padded(x);
         };
 
-        // -- divide -----------------------------------------------------------
+        // -- elementwise_quotient ---------------------------------------------
 
-        test("divide: x_i == ref_x_i / ref_y_i (non-zero divisors); pad zero; norm finite") = [] {
+        test("elementwise_quotient: x_i == ref_x_i / ref_y_i (non-zero divisors); pad zero; norm finite") = [] {
             mi::Vector<double, 17> x{}, y{};
             for (int i = 0; i < 17; ++i) {
                 x[static_cast<std::size_t>(i)] = static_cast<double>(i - 8);
                 y[static_cast<std::size_t>(i)] = static_cast<double>((i % 5) + 1); // 1..5, never 0
             }
             std::vector<double> rx(x.begin(), x.end()), ry(y.begin(), y.end());
-            x.divide(y);
+            x.elementwise_quotient(y);
             for (std::size_t i = 0; i < rx.size(); ++i) {
                 expect(close(x[i], rx[i] / ry[i]));
             }
@@ -291,16 +291,16 @@ int main()
 
         // -- size mismatch (the one test that passes against the stubs) --------
 
-        test("multiply/divide throw invalid_argument on size mismatch (static vs dynamic)") = [] {
+        test("elementwise_product/quotient throw invalid_argument on size mismatch (static vs dynamic)") = [] {
             mi::Vector<double, 5> a{1, 2, 3, 4, 5};
             mi::Vector<double> b(4);
-            expect(throws<std::invalid_argument>([&] { a.multiply(b); }));
-            expect(throws<std::invalid_argument>([&] { a.divide(b); }));
+            expect(throws<std::invalid_argument>([&] { a.elementwise_product(b); }));
+            expect(throws<std::invalid_argument>([&] { a.elementwise_quotient(b); }));
 
             mi::Vector<double> c(5);
             mi::Vector<double> d(6);
-            expect(throws<std::invalid_argument>([&] { c.multiply(d); }));
-            expect(throws<std::invalid_argument>([&] { c.divide(d); }));
+            expect(throws<std::invalid_argument>([&] { c.elementwise_product(d); }));
+            expect(throws<std::invalid_argument>([&] { c.elementwise_quotient(d); }));
         };
 
         // -- both element types and storage strategies -------------------------
