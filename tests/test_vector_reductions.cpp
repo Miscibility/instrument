@@ -23,8 +23,11 @@ namespace mi = miscibility::instrument;
 
 namespace {
 
-// Relative-tolerance comparator, mirroring tmp/test_vector.cpp's close().
-template<class T> bool close(T a, T b, T tol = T(1e-6))
+// Relative-tolerance comparator, mirroring tmp/test_vector.cpp's close(). The
+// default tolerance is tight: every reduction here is either bit-exact or, for
+// the 1000-element double sums, off by only the reassociation rounding of a
+// SIMD vs. sequential accumulation (~2e-15 relative). 1e-12 keeps ~500x headroom.
+template<class T> bool close(T a, T b, T tol = T(1e-12))
 {
     return std::abs(a - b) <= tol * (T(1) + std::abs(a) + std::abs(b));
 }
@@ -92,7 +95,7 @@ int main()
             for (std::size_t i = 0; i < 17; ++i) {
                 ref += x[i] * y[i];
             }
-            expect(close(x.dot(y), ref, 1e-4f));
+            expect(close(x.dot(y), ref, 1e-8F));
         };
 
         // -- euclidean_norm ----------------------------------------------------
