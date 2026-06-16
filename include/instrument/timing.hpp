@@ -7,7 +7,8 @@
  *  - A non-RAII span API (miscibility::instrument::start / miscibility::instrument::stop) for regions that
  *    do not match lexical scope (e.g. spanning an MPI_Isend / MPI_Wait pair).
  *  - Compile-time timing levels: a `Timer<Level>` (or `start<Level>`) compiles to
- *    nothing when `Level > MISCIBILITY_INSTRUMENT_TIMING_LEVEL`. `MISCIBILITY_INSTRUMENT_TIMING_LEVEL` is intended to be set by CMake.
+ *    nothing when `Level > MISCIBILITY_INSTRUMENT_TIMING_LEVEL`. `MISCIBILITY_INSTRUMENT_TIMING_LEVEL` is intended to
+ * be set by CMake.
  *  - Statistics: call count, inclusive/exclusive time, time per iteration, percentage
  *    of total and of parent; queryable by path.
  *  - Human-readable reports (aligned ASCII or GitHub Markdown) to a stream or file.
@@ -508,8 +509,8 @@ inline std::optional<Stats> query(std::string_view path)
  *     {
  *         miscibility::instrument::Timer<> s{"spmv"};      // nested under "solve"
  *         for (int i = 0; i < iters; ++i) {
- *             miscibility::instrument::Timer<3> it{"spmv_iter"};  // level 3: off if MISCIBILITY_INSTRUMENT_TIMING_LEVEL<3
- *             matvec();
+ *             miscibility::instrument::Timer<3> it{"spmv_iter"};  // level 3: off if
+ * MISCIBILITY_INSTRUMENT_TIMING_LEVEL<3 matvec();
  *         }
  *     }
  * }
@@ -584,8 +585,8 @@ public:
  * void solve() {
  *     auto t = miscibility::instrument::scoped_timer("solve");        // level 1 (default)
  *     for (int i = 0; i < iters; ++i) {
- *         auto it = miscibility::instrument::scoped_timer<3>("spmv");  // off if MISCIBILITY_INSTRUMENT_TIMING_LEVEL < 3
- *         matvec();
+ *         auto it = miscibility::instrument::scoped_timer<3>("spmv");  // off if MISCIBILITY_INSTRUMENT_TIMING_LEVEL <
+ * 3 matvec();
  *     }
  * }
  *

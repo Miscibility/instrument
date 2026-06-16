@@ -5,23 +5,18 @@
 // each Vector constructor currently throws std::runtime_error, so any test
 // that builds a Vector fails before it can assert real behaviour.
 
-#include <boost/ut.hpp>
+#include "instrument/vector.hpp"
 
+#include <boost/ut.hpp>
 #include <cstdint>
 #include <stdexcept>
-#include <vector>
-
-#include "instrument/vector.hpp"
 
 namespace mi = miscibility::instrument;
 
 namespace {
 
 // Number of SIMD lanes for the build's static-dispatch target.
-template<class T> std::size_t lane_count()
-{
-    return mi::detail::hn::Lanes(mi::detail::hn::ScalableTag<T>{});
-}
+template<class T> std::size_t lane_count() { return mi::detail::hn::Lanes(mi::detail::hn::ScalableTag<T>{}); }
 
 // The full storage invariant: aligned buffer, capacity a whole multiple of the
 // lane count, capacity >= size, and every pad slot held at zero.
@@ -31,7 +26,7 @@ template<class V> void check_aligned_and_padded(const V& v)
     using T = typename V::value_type;
     expect((reinterpret_cast<std::uintptr_t>(v.data()) % mi::detail::alignment) == 0_u);
     const std::size_t lanes = lane_count<T>();
-    expect((v.capacity() % lanes) == 0u) << "single-loop, no remainder";
+    expect((v.capacity() % lanes) == 0_u) << "single-loop, no remainder";
     expect(v.capacity() >= v.size());
     for (std::size_t i = v.size(); i < v.capacity(); ++i) {
         expect(v.data()[i] == T{}) << "pad slot" << i << "must be zero";
@@ -105,7 +100,7 @@ int main()
             }
             v.zero_pad();
             // Logical elements untouched...
-            const std::array<double,5> expected{1, 2, 3, 4, 5};
+            const std::array<double, 5> expected{1, 2, 3, 4, 5};
             for (std::size_t i = 0; i < v.size(); ++i) {
                 expect(v[i] == expected[i]);
             }

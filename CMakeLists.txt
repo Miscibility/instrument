@@ -67,6 +67,15 @@ FetchContent_Declare(highway
 )
 FetchContent_MakeAvailable(highway)
 
+# CBLAS + LAPACK (OpenBLAS) — backs instrument/matrix.hpp's BLAS-2/3 and LAPACK
+# wrappers. The libraries are found here and linked onto the interface target so
+# every consumer of Instrument links to them. matrix.hpp includes <cblas.h> (and,
+# from the factorization spec onward, <lapacke.h>); locate those headers too.
+find_package(BLAS REQUIRED)
+find_package(LAPACK REQUIRED)
+find_path(CBLAS_INCLUDE_DIR cblas.h)
+find_path(LAPACKE_INCLUDE_DIR lapacke.h) # may be absent until liblapacke-dev is installed
+
 # Header-only interface library
 add_library(${PROJECT_NAME} INTERFACE)
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
@@ -82,6 +91,17 @@ target_link_libraries(${PROJECT_NAME} INTERFACE hwy hwy_contrib)
 target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE
     $<BUILD_INTERFACE:${highway_SOURCE_DIR}>
 )
+
+# Propagate CBLAS/LAPACK to every consumer; matrix.hpp includes their headers.
+# The headers' include dirs are marked SYSTEM so -Wall -Wextra -Wpedantic do not
+# fire inside them.
+target_link_libraries(${PROJECT_NAME} INTERFACE BLAS::BLAS LAPACK::LAPACK)
+if(CBLAS_INCLUDE_DIR)
+    target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE $<BUILD_INTERFACE:${CBLAS_INCLUDE_DIR}>)
+endif()
+if(LAPACKE_INCLUDE_DIR)
+    target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE $<BUILD_INTERFACE:${LAPACKE_INCLUDE_DIR}>)
+endif()
 
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_23)
 
