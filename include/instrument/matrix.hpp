@@ -317,6 +317,35 @@ public:
     /// @brief ADL swap: exchange the contents of @p a and @p b.
     friend void swap(DenseMatrix& a, DenseMatrix& b) noexcept { a.swap(b); }
 
+    /**
+     * @brief Copy the values of @p src into this already-sized matrix, in place and without
+     *        allocating.
+     * @tparam R Source row extent (any matching shape is accepted, static or dynamic).
+     * @tparam C Source column extent.
+     * @param src Source of the same logical shape as @c *this; its values overwrite this matrix's.
+     * @return `*this`, to allow chaining.
+     * @throws std::invalid_argument if @p src has a different shape (`rows()`/`columns()`).
+     *
+     * The destination keeps its own storage -- nothing is allocated or resized, so a shape
+     * mismatch is a caller error (thrown) rather than a trigger to grow. Delegates to
+     * `Vector::copy` on the backing buffer, preserving the column-major layout and the zero-pad
+     * invariant. The two operands may have different extents (a static matrix can be copied into a
+     * dynamic one of equal shape, and vice versa).
+     * @code{.cpp}
+     * miscibility::instrument::DenseMatrix<double, 2, 2> s{{1, 2}, {3, 4}};
+     * miscibility::instrument::DenseMatrix<double> d(2, 2);
+     * d.copy(s); // d now holds s's values; no allocation, extents may differ
+     * @endcode
+     */
+    template<std::size_t R, std::size_t C> DenseMatrix& copy(const DenseMatrix<T, R, C>& src)
+    {
+        if (rows_ != src.rows() || cols_ != src.columns()) {
+            throw std::invalid_argument{"miscibility::instrument::DenseMatrix shape mismatch"};
+        }
+        data_.copy(src.as_vector());
+        return *this;
+    }
+
     // -- elementwise surface (delegates to the backing Vector) ----------------
 
     /// @brief In place scalar scaling `A <- a*A`. @param a Scale factor. @return `*this`, for chaining.
@@ -772,6 +801,29 @@ public:
         Vector<T> x(n_);
         solve_into(b, x);
         return x;
+    }
+
+    /**
+     * @brief Copy @p src's factorization state into this one, in place and without allocating.
+     * @param src Source factorization of the same `order()` as @c *this; its factors, pivots and
+     *            singular flag overwrite this object's.
+     * @return `*this`, to allow chaining.
+     * @throws std::invalid_argument if `src.order() != order()`.
+     *
+     * Refills a reusable factorization slot from another of equal order without reallocating the
+     * internal factors or pivots: the packed `L\U` factors are copied via `DenseMatrix::copy`, the
+     * pivots in place, and singular() is carried over. After the copy this factorization solves
+     * identically to @p src. A size mismatch is a caller error (thrown), never a resize.
+     */
+    LUFactorization& copy(const LUFactorization& src)
+    {
+        if (n_ != src.n_) {
+            throw std::invalid_argument{"miscibility::instrument::LUFactorization order mismatch"};
+        }
+        lu_.copy(src.lu_);
+        std::copy_n(src.pivots_.data(), n_, pivots_.data());
+        singular_ = src.singular_;
+        return *this;
     }
 
 private:
