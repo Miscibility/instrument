@@ -9,15 +9,14 @@
 // binary aborts when a reduction is first exercised -- that is the expected
 // "not implemented" signal; tdd-3 replaces the bodies and the suite goes green.)
 
-#include <boost/ut.hpp>
+#include "instrument/vector.hpp"
 
+#include <boost/ut.hpp>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
-
-#include "instrument/vector.hpp"
 
 namespace mi = miscibility::instrument;
 
@@ -32,10 +31,7 @@ template<class T> bool close(T a, T b, T tol = T(1e-12))
     return std::abs(a - b) <= tol * (T(1) + std::abs(a) + std::abs(b));
 }
 
-template<class T> std::size_t lane_count()
-{
-    return mi::detail::hn::Lanes(mi::detail::hn::ScalableTag<T>{});
-}
+template<class T> std::size_t lane_count() { return mi::detail::hn::Lanes(mi::detail::hn::ScalableTag<T>{}); }
 
 // The storage invariant: aligned buffer, capacity a whole multiple of the lane
 // count, capacity >= size, every pad slot zero.
@@ -45,7 +41,7 @@ template<class V> void check_aligned_and_padded(const V& v)
     using T = typename V::value_type;
     expect((reinterpret_cast<std::uintptr_t>(v.data()) % mi::detail::alignment) == 0_u);
     const std::size_t lanes = lane_count<T>();
-    expect((v.capacity() % lanes) == 0u) << "single-loop, no remainder";
+    expect((v.capacity() % lanes) == 0_u) << "single-loop, no remainder";
     expect(v.capacity() >= v.size());
     for (std::size_t i = v.size(); i < v.capacity(); ++i) {
         expect(v.data()[i] == T{}) << "pad slot" << i << "must be zero";
@@ -195,7 +191,7 @@ int main()
             std::vector<double> rx(x.begin(), x.end()), ry(y.begin(), y.end());
             y.add_scaled(3.0, x);
             for (std::size_t i = 0; i < ry.size(); ++i) {
-                expect(close(y[i], ry[i] + 3.0 * rx[i]));
+                expect(close(y[i], ry[i] + (3.0 * rx[i])));
             }
             check_aligned_and_padded(y);
         };

@@ -73,6 +73,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <hwy/aligned_allocator.h>     // HWY_ALIGNMENT
+#include <hwy/contrib/math/math-inl.h> // transcendental lane ops: Exp, Log, Sin, ...
+#include <hwy/highway.h>               // static dispatch: ScalableTag / Lanes
 #include <initializer_list>
 #include <limits>
 #include <new>
@@ -80,10 +83,6 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
-
-#include <hwy/aligned_allocator.h>     // HWY_ALIGNMENT
-#include <hwy/highway.h>               // static dispatch: ScalableTag / Lanes
-#include <hwy/contrib/math/math-inl.h> // transcendental lane ops: Exp, Log, Sin, ...
 
 /// @namespace miscibility::instrument
 /// @brief Instrument library for the Miscibility project; this header adds an aligned vector.
@@ -122,8 +121,7 @@ inline constexpr std::size_t alignment = HWY_ALIGNMENT; // 64 bytes
  * bytes and both quantities are powers of two, a multiple of `pad_step<T>` elements is also a
  * whole multiple of `Lanes(d)` on every static-dispatch target.
  */
-template<Scalar T>
-inline constexpr std::size_t pad_step = (alignment / sizeof(T) == 0) ? 1 : alignment / sizeof(T);
+template<Scalar T> inline constexpr std::size_t pad_step = (alignment / sizeof(T) == 0) ? 1 : alignment / sizeof(T);
 
 /**
  * @internal
@@ -263,8 +261,7 @@ template<Scalar T> [[nodiscard]] T absolute_sum(const T* p, std::size_t cap) noe
  * lanes are zero and the update is strict, so a pad slot can never displace a real element;
  * for an all-zero input every lane keeps its initial `Iota` index and the result is 0.
  */
-template<Scalar T>
-[[nodiscard]] std::size_t index_of_max_magnitude(const T* p, std::size_t cap) noexcept
+template<Scalar T> [[nodiscard]] std::size_t index_of_max_magnitude(const T* p, std::size_t cap) noexcept
 {
     const hn::ScalableTag<T> d;
     const hn::RebindToUnsigned<decltype(d)> du;
@@ -377,9 +374,10 @@ public:
     }
 
     /// @brief Steal @p o's buffer, leaving it empty.
-    dynamic_storage(dynamic_storage&& o) noexcept
-        : data_{std::exchange(o.data_, nullptr)}, size_{std::exchange(o.size_, std::size_t{0})},
-          capacity_{std::exchange(o.capacity_, std::size_t{0})}
+    dynamic_storage(dynamic_storage&& o) noexcept :
+        data_{std::exchange(o.data_, nullptr)},
+        size_{std::exchange(o.size_, std::size_t{0})},
+        capacity_{std::exchange(o.capacity_, std::size_t{0})}
     {
     }
 
@@ -417,8 +415,8 @@ public:
         swap(capacity_, o.capacity_);
     }
 
-    [[nodiscard]] T* data() noexcept { return data_; }              ///< Mutable buffer pointer.
-    [[nodiscard]] const T* data() const noexcept { return data_; }  ///< Const buffer pointer.
+    [[nodiscard]] T* data() noexcept { return data_; }                        ///< Mutable buffer pointer.
+    [[nodiscard]] const T* data() const noexcept { return data_; }            ///< Const buffer pointer.
     [[nodiscard]] std::size_t size() const noexcept { return size_; }         ///< Logical length.
     [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; } ///< Padded length.
 
@@ -429,10 +427,7 @@ private:
         return static_cast<T*>(::operator new(cap * sizeof(T), std::align_val_t{alignment}));
     }
     /// @brief Free an aligned buffer (no-op on nullptr).
-    static void deallocate(T* p, std::size_t /*cap*/) noexcept
-    {
-        ::operator delete(p, std::align_val_t{alignment});
-    }
+    static void deallocate(T* p, std::size_t /*cap*/) noexcept { ::operator delete(p, std::align_val_t{alignment}); }
 
     T* data_{nullptr};        ///< Owned aligned buffer, or nullptr when empty.
     std::size_t size_{0};     ///< Logical element count.
@@ -453,9 +448,9 @@ template<Scalar T, std::size_t N> class static_storage {
     static_assert(N > 0, "use miscibility::instrument::dynamic for length 0 / runtime length");
 
 public:
-    [[nodiscard]] T* data() noexcept { return data_; }             ///< Mutable buffer pointer.
-    [[nodiscard]] const T* data() const noexcept { return data_; } ///< Const buffer pointer.
-    [[nodiscard]] static constexpr std::size_t size() noexcept { return N; } ///< Logical length.
+    [[nodiscard]] T* data() noexcept { return data_; }                                   ///< Mutable buffer pointer.
+    [[nodiscard]] const T* data() const noexcept { return data_; }                       ///< Const buffer pointer.
+    [[nodiscard]] static constexpr std::size_t size() noexcept { return N; }             ///< Logical length.
     [[nodiscard]] static constexpr std::size_t capacity() noexcept { return capacity_; } ///< Padded length.
 
 private:
@@ -493,10 +488,10 @@ template<Scalar T, std::size_t N = dynamic> class Vector {
     using storage = detail::storage_t<T, N>;
 
 public:
-    using value_type = T;                ///< Element type.
-    using size_type = std::size_t;       ///< Length / index type.
-    using iterator = T*;                 ///< Mutable contiguous iterator.
-    using const_iterator = const T*;     ///< Const contiguous iterator.
+    using value_type = T;            ///< Element type.
+    using size_type = std::size_t;   ///< Length / index type.
+    using iterator = T*;             ///< Mutable contiguous iterator.
+    using const_iterator = const T*; ///< Const contiguous iterator.
 
     /// @brief True iff this is the runtime-length (heap-backed) specialization.
     static constexpr bool is_dynamic = (N == dynamic);
@@ -587,15 +582,15 @@ public:
         return data()[i];
     }
 
-    [[nodiscard]] T* data() noexcept { return store_.data(); }             ///< Pointer to the aligned buffer.
-    [[nodiscard]] const T* data() const noexcept { return store_.data(); } ///< Const pointer to the aligned buffer.
+    [[nodiscard]] T* data() noexcept { return store_.data(); }              ///< Pointer to the aligned buffer.
+    [[nodiscard]] const T* data() const noexcept { return store_.data(); }  ///< Const pointer to the aligned buffer.
     [[nodiscard]] size_type size() const noexcept { return store_.size(); } ///< Logical element count.
     /// @brief Padded element count: a whole multiple of the SIMD lane count, `>= size()`.
     [[nodiscard]] size_type capacity() const noexcept { return store_.capacity(); }
     [[nodiscard]] bool empty() const noexcept { return size() == 0; } ///< True iff `size() == 0`.
 
-    [[nodiscard]] iterator begin() noexcept { return data(); }                  ///< Begin of the logical range.
-    [[nodiscard]] iterator end() noexcept { return data() + size(); }           ///< End of the logical range.
+    [[nodiscard]] iterator begin() noexcept { return data(); }                    ///< Begin of the logical range.
+    [[nodiscard]] iterator end() noexcept { return data() + size(); }             ///< End of the logical range.
     [[nodiscard]] const_iterator begin() const noexcept { return data(); }        ///< Const begin of the logical range.
     [[nodiscard]] const_iterator end() const noexcept { return data() + size(); } ///< Const end of the logical range.
 
@@ -677,16 +672,10 @@ public:
     }
 
     /// @brief Euclidean (L2) norm `sqrt(Sum this_i^2)` (nrm2). @return The norm.
-    [[nodiscard]] T euclidean_norm() const noexcept
-    {
-        return std::sqrt(detail::sum_squares<T>(data(), capacity()));
-    }
+    [[nodiscard]] T euclidean_norm() const noexcept { return std::sqrt(detail::sum_squares<T>(data(), capacity())); }
 
     /// @brief Sum of magnitudes `Sum |this_i|` (asum). @return The absolute sum.
-    [[nodiscard]] T absolute_sum() const noexcept
-    {
-        return detail::absolute_sum<T>(data(), capacity());
-    }
+    [[nodiscard]] T absolute_sum() const noexcept { return detail::absolute_sum<T>(data(), capacity()); }
 
     /**
      * @brief Index of the largest-magnitude element (iamax).
@@ -708,10 +697,7 @@ public:
      * For an empty vector index_of_max_magnitude() returns `size()`; reading that neutral pad
      * slot yields zero, so this stays `noexcept` rather than throwing as `at(size())` would.
      */
-    [[nodiscard]] T max_magnitude() const noexcept
-    {
-        return std::abs(data()[index_of_max_magnitude()]);
-    }
+    [[nodiscard]] T max_magnitude() const noexcept { return std::abs(data()[index_of_max_magnitude()]); }
 
     // -- componentwise transforms ---------------------------------------------
     //
@@ -903,8 +889,7 @@ public:
     template<std::size_t M> Vector& elementwise_product(const Vector<T, M>& x)
     {
         check_same_size(x.size());
-        detail::zip<T>(data(), x.data(), capacity(),
-                       [](auto /*d*/, auto y, auto v) { return detail::hn::Mul(y, v); });
+        detail::zip<T>(data(), x.data(), capacity(), [](auto /*d*/, auto y, auto v) { return detail::hn::Mul(y, v); });
         zero_pad();
         return *this;
     }
@@ -922,8 +907,7 @@ public:
     template<std::size_t M> Vector& elementwise_quotient(const Vector<T, M>& x)
     {
         check_same_size(x.size());
-        detail::zip<T>(data(), x.data(), capacity(),
-                       [](auto /*d*/, auto y, auto v) { return detail::hn::Div(y, v); });
+        detail::zip<T>(data(), x.data(), capacity(), [](auto /*d*/, auto y, auto v) { return detail::hn::Div(y, v); });
         zero_pad();
         return *this;
     }

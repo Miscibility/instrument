@@ -12,15 +12,14 @@
 // multiply/divide run the (already-implemented) check_same_size before reaching
 // the stub, so that test pins the throwing contract and passes now.
 
-#include <boost/ut.hpp>
+#include "instrument/vector.hpp"
 
+#include <boost/ut.hpp>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
-
-#include "instrument/vector.hpp"
 
 namespace mi = miscibility::instrument;
 
@@ -35,10 +34,7 @@ template<class T> bool close(T a, T b, T tol = T(1e-9))
     return std::abs(a - b) <= tol * (T(1) + std::abs(a) + std::abs(b));
 }
 
-template<class T> std::size_t lane_count()
-{
-    return mi::detail::hn::Lanes(mi::detail::hn::ScalableTag<T>{});
-}
+template<class T> std::size_t lane_count() { return mi::detail::hn::Lanes(mi::detail::hn::ScalableTag<T>{}); }
 
 // The storage invariant: aligned buffer, capacity a whole multiple of the lane
 // count, capacity >= size, every pad slot zero. The pad check is the crux of
@@ -49,7 +45,7 @@ template<class V> void check_aligned_and_padded(const V& v)
     using T = typename V::value_type;
     expect((reinterpret_cast<std::uintptr_t>(v.data()) % mi::detail::alignment) == 0_u);
     const std::size_t lanes = lane_count<T>();
-    expect((v.capacity() % lanes) == 0u) << "single-loop, no remainder";
+    expect((v.capacity() % lanes) == 0_u) << "single-loop, no remainder";
     expect(v.capacity() >= v.size());
     for (std::size_t i = v.size(); i < v.capacity(); ++i) {
         expect(v.data()[i] == T{}) << "pad slot" << i << "must be zero";
@@ -59,8 +55,7 @@ template<class V> void check_aligned_and_padded(const V& v)
 // Apply a unary transform to a fresh dynamic double Vector built from `input`,
 // then assert it matches the scalar reference elementwise and the pad is zero.
 template<class Transform, class Ref>
-void check_unary_double(const std::vector<double>& input, Transform transform, Ref ref,
-                        double tol = 1e-9)
+void check_unary_double(const std::vector<double>& input, Transform transform, Ref ref, double tol = 1e-9)
 {
     using namespace boost::ut;
     mi::Vector<double> v(input.size());
@@ -97,9 +92,9 @@ int main()
         // -- sqrt --------------------------------------------------------------
 
         test("sqrt: matches std::sqrt on non-negative input; pad zero") = [] {
-            check_unary_double({0.0, 0.25, 1.0, 2.0, 9.0, 1234.5, 0.001},
-                               [](auto& v) { v.sqrt(); },
-                               [](double x) { return std::sqrt(x); });
+            check_unary_double(
+                {0.0, 0.25, 1.0, 2.0, 9.0, 1234.5, 0.001}, [](auto& v) { v.sqrt(); },
+                [](double x) { return std::sqrt(x); });
         };
 
         // -- exp + the central pad invariant -----------------------------------
@@ -107,107 +102,104 @@ int main()
         test("exp: matches std::exp; pad is zero afterward (the zero_pad guard)") = [] {
             // exp(0) = 1 would corrupt the pad if the trailing zero_pad() were
             // omitted; check_aligned_and_padded is exactly that regression test.
-            check_unary_double({-3.0, -1.0, 0.0, 0.5, 1.0, 2.5, 4.0},
-                               [](auto& v) { v.exp(); },
-                               [](double x) { return std::exp(x); });
+            check_unary_double(
+                {-3.0, -1.0, 0.0, 0.5, 1.0, 2.5, 4.0}, [](auto& v) { v.exp(); }, [](double x) { return std::exp(x); });
         };
 
         // -- the remaining transcendentals -------------------------------------
 
         test("exp2: matches std::exp2") = [] {
-            check_unary_double({-3.0, -1.0, 0.0, 0.5, 1.0, 2.5, 8.0},
-                               [](auto& v) { v.exp2(); },
-                               [](double x) { return std::exp2(x); });
+            check_unary_double(
+                {-3.0, -1.0, 0.0, 0.5, 1.0, 2.5, 8.0}, [](auto& v) { v.exp2(); },
+                [](double x) { return std::exp2(x); });
         };
 
         test("expm1: matches std::expm1") = [] {
-            check_unary_double({-2.0, -0.1, 0.0, 1e-6, 0.5, 1.0, 3.0},
-                               [](auto& v) { v.expm1(); },
-                               [](double x) { return std::expm1(x); });
+            check_unary_double(
+                {-2.0, -0.1, 0.0, 1e-6, 0.5, 1.0, 3.0}, [](auto& v) { v.expm1(); },
+                [](double x) { return std::expm1(x); });
         };
 
         test("log: matches std::log on positive input") = [] {
-            check_unary_double({1e-3, 0.5, 1.0, 2.0, 10.0, 250.0, 1e4},
-                               [](auto& v) { v.log(); },
-                               [](double x) { return std::log(x); });
+            check_unary_double(
+                {1e-3, 0.5, 1.0, 2.0, 10.0, 250.0, 1e4}, [](auto& v) { v.log(); },
+                [](double x) { return std::log(x); });
         };
 
         test("log2: matches std::log2 on positive input") = [] {
-            check_unary_double({1e-3, 0.5, 1.0, 2.0, 8.0, 250.0, 1e4},
-                               [](auto& v) { v.log2(); },
-                               [](double x) { return std::log2(x); });
+            check_unary_double(
+                {1e-3, 0.5, 1.0, 2.0, 8.0, 250.0, 1e4}, [](auto& v) { v.log2(); },
+                [](double x) { return std::log2(x); });
         };
 
         test("log10: matches std::log10 on positive input") = [] {
-            check_unary_double({1e-3, 0.5, 1.0, 10.0, 100.0, 250.0, 1e4},
-                               [](auto& v) { v.log10(); },
-                               [](double x) { return std::log10(x); });
+            check_unary_double(
+                {1e-3, 0.5, 1.0, 10.0, 100.0, 250.0, 1e4}, [](auto& v) { v.log10(); },
+                [](double x) { return std::log10(x); });
         };
 
         test("log1p: matches std::log1p on input > -1") = [] {
-            check_unary_double({-0.9, -0.1, 0.0, 1e-6, 0.5, 2.0, 100.0},
-                               [](auto& v) { v.log1p(); },
-                               [](double x) { return std::log1p(x); });
+            check_unary_double(
+                {-0.9, -0.1, 0.0, 1e-6, 0.5, 2.0, 100.0}, [](auto& v) { v.log1p(); },
+                [](double x) { return std::log1p(x); });
         };
 
         test("sin: matches std::sin") = [] {
-            check_unary_double({-3.0, -1.0, 0.0, 0.5, 1.5, 3.0, 6.0},
-                               [](auto& v) { v.sin(); },
-                               [](double x) { return std::sin(x); });
+            check_unary_double(
+                {-3.0, -1.0, 0.0, 0.5, 1.5, 3.0, 6.0}, [](auto& v) { v.sin(); }, [](double x) { return std::sin(x); });
         };
 
         test("cos: matches std::cos") = [] {
-            check_unary_double({-3.0, -1.0, 0.0, 0.5, 1.5, 3.0, 6.0},
-                               [](auto& v) { v.cos(); },
-                               [](double x) { return std::cos(x); });
+            check_unary_double(
+                {-3.0, -1.0, 0.0, 0.5, 1.5, 3.0, 6.0}, [](auto& v) { v.cos(); }, [](double x) { return std::cos(x); });
         };
 
         test("sinh: matches std::sinh") = [] {
-            check_unary_double({-3.0, -1.0, 0.0, 0.5, 1.5, 3.0, 5.0},
-                               [](auto& v) { v.sinh(); },
-                               [](double x) { return std::sinh(x); });
+            check_unary_double(
+                {-3.0, -1.0, 0.0, 0.5, 1.5, 3.0, 5.0}, [](auto& v) { v.sinh(); },
+                [](double x) { return std::sinh(x); });
         };
 
         test("tanh: matches std::tanh") = [] {
-            check_unary_double({-3.0, -1.0, 0.0, 0.5, 1.5, 3.0, 8.0},
-                               [](auto& v) { v.tanh(); },
-                               [](double x) { return std::tanh(x); });
+            check_unary_double(
+                {-3.0, -1.0, 0.0, 0.5, 1.5, 3.0, 8.0}, [](auto& v) { v.tanh(); },
+                [](double x) { return std::tanh(x); });
         };
 
         test("asin: matches std::asin on [-1, 1]") = [] {
-            check_unary_double({-1.0, -0.7, -0.1, 0.0, 0.25, 0.7, 1.0},
-                               [](auto& v) { v.asin(); },
-                               [](double x) { return std::asin(x); });
+            check_unary_double(
+                {-1.0, -0.7, -0.1, 0.0, 0.25, 0.7, 1.0}, [](auto& v) { v.asin(); },
+                [](double x) { return std::asin(x); });
         };
 
         test("acos: matches std::acos on [-1, 1]") = [] {
-            check_unary_double({-1.0, -0.7, -0.1, 0.0, 0.25, 0.7, 1.0},
-                               [](auto& v) { v.acos(); },
-                               [](double x) { return std::acos(x); });
+            check_unary_double(
+                {-1.0, -0.7, -0.1, 0.0, 0.25, 0.7, 1.0}, [](auto& v) { v.acos(); },
+                [](double x) { return std::acos(x); });
         };
 
         test("asinh: matches std::asinh") = [] {
-            check_unary_double({-5.0, -1.0, 0.0, 0.5, 1.5, 3.0, 10.0},
-                               [](auto& v) { v.asinh(); },
-                               [](double x) { return std::asinh(x); });
+            check_unary_double(
+                {-5.0, -1.0, 0.0, 0.5, 1.5, 3.0, 10.0}, [](auto& v) { v.asinh(); },
+                [](double x) { return std::asinh(x); });
         };
 
         test("acosh: matches std::acosh on input >= 1") = [] {
-            check_unary_double({1.0, 1.1, 1.5, 2.0, 5.0, 50.0, 1e3},
-                               [](auto& v) { v.acosh(); },
-                               [](double x) { return std::acosh(x); });
+            check_unary_double(
+                {1.0, 1.1, 1.5, 2.0, 5.0, 50.0, 1e3}, [](auto& v) { v.acosh(); },
+                [](double x) { return std::acosh(x); });
         };
 
         test("atan: matches std::atan") = [] {
-            check_unary_double({-50.0, -1.0, -0.1, 0.0, 0.5, 3.0, 100.0},
-                               [](auto& v) { v.atan(); },
-                               [](double x) { return std::atan(x); });
+            check_unary_double(
+                {-50.0, -1.0, -0.1, 0.0, 0.5, 3.0, 100.0}, [](auto& v) { v.atan(); },
+                [](double x) { return std::atan(x); });
         };
 
         test("atanh: matches std::atanh on (-1, 1)") = [] {
-            check_unary_double({-0.95, -0.5, -0.1, 0.0, 0.25, 0.6, 0.95},
-                               [](auto& v) { v.atanh(); },
-                               [](double x) { return std::atanh(x); });
+            check_unary_double(
+                {-0.95, -0.5, -0.1, 0.0, 0.25, 0.6, 0.95}, [](auto& v) { v.atanh(); },
+                [](double x) { return std::atanh(x); });
         };
 
         // -- apply with a custom functor --------------------------------------
@@ -321,7 +313,7 @@ int main()
         test("works for Vector<double>(1000) (dynamic extent)") = [] {
             mi::Vector<double> x(1000);
             for (std::size_t i = 0; i < 1000; ++i) {
-                x[i] = 0.01 * static_cast<double>(i) - 5.0;
+                x[i] = (0.01 * static_cast<double>(i)) - 5.0;
             }
             std::vector<double> ref(x.begin(), x.end());
             x.exp();

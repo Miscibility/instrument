@@ -1,13 +1,11 @@
 // test_matrix_lapack.cpp -- unit tests for LUFactorization: copy/move construction
 // from a DenseMatrix and solving linear systems (LAPACK getrf/getrs). boost/ut.
 
+#include "instrument/matrix.hpp"
 
 #include <boost/ut.hpp>
-
 #include <cmath>
 #include <utility>
-
-#include "instrument/matrix.hpp"
 
 namespace mi = miscibility::instrument;
 
@@ -62,14 +60,13 @@ int main()
             mi::Vector<double> wrong_b{1, 2, 3};
             expect(throws<std::invalid_argument>([&] { (void)lu.solve(wrong_b); }));
             mi::Vector<double> wrong_x(3);
-            expect(throws<std::invalid_argument>(
-                [&] { lu.solve_into(mi::Vector<double>{3, 5}, wrong_x); }));
+            expect(throws<std::invalid_argument>([&] { lu.solve_into(mi::Vector<double>{3, 5}, wrong_x); }));
         };
 
         test("move construction guts a dynamic source to empty 0x0") = [] {
             mi::DenseMatrix<double> a{{2, 1}, {1, 3}};
             mi::LUFactorization<double> lu{std::move(a)};
-            expect(a.rows() == 0_u);     // NOLINT(bugprone-use-after-move) -- intentional
+            expect(a.rows() == 0_u); // NOLINT(bugprone-use-after-move) -- intentional
             expect(a.columns() == 0_u);
             auto x = lu.solve(mi::Vector<double>{3, 5});
             expect(close(x[0], 0.8));
@@ -94,7 +91,7 @@ int main()
             auto x1 = a.lu().solve(b); // lvalue -> copy, A preserved
             expect(a.rows() == 2_u);
             auto x2 = std::move(a).lu().solve(b); // rvalue -> move, A emptied
-            expect(a.rows() == 0_u); // NOLINT(bugprone-use-after-move)
+            expect(a.rows() == 0_u);              // NOLINT(bugprone-use-after-move)
             expect(close(x1[0], x2[0]));
             expect(close(x1[1], x2[1]));
             expect(close(x1[0], 0.8));

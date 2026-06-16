@@ -1,12 +1,10 @@
 // test_matrix_blas2.cpp -- unit tests for the DenseMatrix matrix-vector product
 // (CBLAS gemv): multiply, multiply_into, operator*. boost/ut.
 
+#include "instrument/matrix.hpp"
 
 #include <boost/ut.hpp>
-
 #include <cmath>
-
-#include "instrument/matrix.hpp"
 
 namespace mi = miscibility::instrument;
 
@@ -50,8 +48,8 @@ int main()
             mi::Vector<double> x{5, 6};
             mi::Vector<double> y{1, 1};
             a.multiply_into(x, y, 2.0, 3.0); // 2*A*x + 3*y
-            expect(close(y[0], 37.0)); // 37
-            expect(close(y[1], 81.0)); // 81
+            expect(close(y[0], 37.0));       // 37
+            expect(close(y[1], 81.0));       // 81
         };
 
         test("non-square: 2x3 times length-3 gives length 2; transposed gives length 3") = [] {

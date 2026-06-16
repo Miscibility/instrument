@@ -6,24 +6,20 @@
 // DenseMatrix constructor currently throws std::runtime_error, so each test fails
 // at the construction line before it can assert real behaviour.
 
-#include <boost/ut.hpp>
+#include "instrument/matrix.hpp"
 
 #include <array>
+#include <boost/ut.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
-
-#include "instrument/matrix.hpp"
 
 namespace mi = miscibility::instrument;
 
 namespace {
 
 // SIMD lanes for the build's static-dispatch target (matches the Vector tests).
-template<class T> std::size_t lane_count()
-{
-    return mi::detail::hn::Lanes(mi::detail::hn::ScalableTag<T>{});
-}
+template<class T> std::size_t lane_count() { return mi::detail::hn::Lanes(mi::detail::hn::ScalableTag<T>{}); }
 
 // The backing Vector's storage invariant: aligned buffer, capacity a whole
 // multiple of the lane count, capacity >= size, every pad slot zero.
@@ -33,7 +29,7 @@ template<class V> void check_aligned_and_padded(const V& v)
     using T = typename V::value_type;
     expect((reinterpret_cast<std::uintptr_t>(v.data()) % mi::detail::alignment) == 0_u);
     const std::size_t lanes = lane_count<T>();
-    expect((v.capacity() % lanes) == 0u) << "single-loop, no remainder";
+    expect((v.capacity() % lanes) == 0_u) << "single-loop, no remainder";
     expect(v.capacity() >= v.size());
     for (std::size_t i = v.size(); i < v.capacity(); ++i) {
         expect(v.data()[i] == T{}) << "pad slot" << i << "must be zero";
@@ -119,13 +115,11 @@ int main()
         };
 
         test("ragged initializer throws invalid_argument") = [] {
-            expect(throws<std::invalid_argument>(
-                [] { mi::DenseMatrix<double> m{{1, 2}, {3}}; }));
+            expect(throws<std::invalid_argument>([] { mi::DenseMatrix<double> m{{1, 2}, {3}}; }));
         };
 
         test("static shape mismatch in the initializer throws invalid_argument") = [] {
-            expect(throws<std::invalid_argument>(
-                [] { mi::DenseMatrix<double, 2, 2> m{{1, 2, 3}, {4, 5, 6}}; }));
+            expect(throws<std::invalid_argument>([] { mi::DenseMatrix<double, 2, 2> m{{1, 2, 3}, {4, 5, 6}}; }));
         };
 
         test("as_vector exposes a length-size, aligned, zero-padded backing Vector") = [] {
@@ -137,8 +131,8 @@ int main()
         test("elementwise scalar scale and matrix add match a per-element reference") = [] {
             mi::DenseMatrix<double, 2, 2> m{{1, 2}, {3, 4}};
             mi::DenseMatrix<double, 2, 2> n{{10, 20}, {30, 40}};
-            m *= 2.0;     // {{2,4},{6,8}}
-            m += n;       // {{12,24},{36,48}}
+            m *= 2.0; // {{2,4},{6,8}}
+            m += n;   // {{12,24},{36,48}}
             const std::array<std::array<double, 2>, 2> expected{{{12, 24}, {36, 48}}};
             for (std::size_t i = 0; i < 2; ++i) {
                 for (std::size_t j = 0; j < 2; ++j) {

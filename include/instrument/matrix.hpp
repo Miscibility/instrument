@@ -57,7 +57,10 @@
 
 #pragma once
 
+#include "instrument/vector.hpp"
+
 #include <algorithm>
+#include <cblas.h>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -65,10 +68,6 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
-
-#include <cblas.h>
-
-#include "instrument/vector.hpp"
 
 /// @namespace miscibility::instrument
 /// @brief Instrument library for the Miscibility project; this header adds a dense matrix.
@@ -100,29 +99,29 @@ inline constexpr bool matrix_is_dynamic = (Rows == dynamic && Cols == dynamic);
 
 /// @internal @brief Backing-Vector extent: heap (@ref dynamic) for dynamic, `Rows*Cols` inline otherwise.
 template<std::size_t Rows, std::size_t Cols>
-inline constexpr std::size_t matrix_extent =
-    matrix_is_dynamic<Rows, Cols> ? dynamic : Rows * Cols;
+inline constexpr std::size_t matrix_extent = matrix_is_dynamic<Rows, Cols> ? dynamic : Rows * Cols;
 
 /// @internal @brief Dispatch `cblas_?gemv` on @p T: `y <- alpha*op(A)*x + beta*y` (column-major).
 template<Scalar T>
-void gemv(CBLAS_TRANSPOSE trans, int m, int n, T alpha, const T* a, int lda, const T* x, T beta,
-          T* y) noexcept
+void gemv(CBLAS_TRANSPOSE trans, int m, int n, T alpha, const T* a, int lda, const T* x, T beta, T* y) noexcept
 {
     if constexpr (std::same_as<T, float>) {
         cblas_sgemv(CblasColMajor, trans, m, n, alpha, a, lda, x, 1, beta, y, 1);
-    } else {
+    }
+    else {
         cblas_dgemv(CblasColMajor, trans, m, n, alpha, a, lda, x, 1, beta, y, 1);
     }
 }
 
 /// @internal @brief Dispatch `cblas_?gemm` on @p T: `C <- alpha*opA(A)*opB(B) + beta*C` (column-major).
 template<Scalar T>
-void gemm(CBLAS_TRANSPOSE transa, CBLAS_TRANSPOSE transb, int m, int n, int k, T alpha, const T* a,
-          int lda, const T* b, int ldb, T beta, T* c, int ldc) noexcept
+void gemm(CBLAS_TRANSPOSE transa, CBLAS_TRANSPOSE transb, int m, int n, int k, T alpha, const T* a, int lda, const T* b,
+          int ldb, T beta, T* c, int ldc) noexcept
 {
     if constexpr (std::same_as<T, float>) {
         cblas_sgemm(CblasColMajor, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
-    } else {
+    }
+    else {
         cblas_dgemm(CblasColMajor, transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc);
     }
 }
@@ -152,8 +151,7 @@ template<Scalar T> class LUFactorization; // defined below; A.lu() is the entry 
  * @warning A static shape stores `Rows*Cols` elements inline; keep it small to avoid stack
  * exhaustion (see the file-level @warning).
  */
-template<Scalar T, std::size_t Rows = dynamic, std::size_t Cols = dynamic>
-class DenseMatrix {
+template<Scalar T, std::size_t Rows = dynamic, std::size_t Cols = dynamic> class DenseMatrix {
     static_assert((Rows == dynamic) == (Cols == dynamic),
                   "DenseMatrix must be either fully static (both Rows and Cols given) "
                   "or fully dynamic (neither). Mixed shapes are not supported.");
@@ -222,8 +220,7 @@ public:
         const size_type ncols = (nrows == 0) ? 0 : rows.begin()->size();
         for (const auto& row : rows) {
             if (row.size() != ncols) {
-                throw std::invalid_argument{
-                    "miscibility::instrument::DenseMatrix ragged initializer"};
+                throw std::invalid_argument{"miscibility::instrument::DenseMatrix ragged initializer"};
             }
         }
         if constexpr (!is_dynamic) {
@@ -232,7 +229,8 @@ public:
             }
             rows_ = Rows;
             cols_ = Cols;
-        } else {
+        }
+        else {
             data_ = storage(nrows * ncols);
             rows_ = nrows;
             cols_ = ncols;
@@ -259,16 +257,12 @@ public:
 
     // -- element access (column-major: element (i, j) lives at j*rows() + i) ---
 
-    /// @brief Unchecked access to element `(i, j)`. @param i Row in `[0, rows())`. @param j Column in `[0, columns())`. @return Reference to the element.
-    [[nodiscard]] T& operator()(size_type i, size_type j) noexcept
-    {
-        return data_[(j * rows_) + i];
-    }
-    /// @brief Unchecked const access to element `(i, j)`. @param i Row index. @param j Column index. @return Const reference to the element.
-    [[nodiscard]] const T& operator()(size_type i, size_type j) const noexcept
-    {
-        return data_[(j * rows_) + i];
-    }
+    /// @brief Unchecked access to element `(i, j)`. @param i Row in `[0, rows())`. @param j Column in `[0, columns())`.
+    /// @return Reference to the element.
+    [[nodiscard]] T& operator()(size_type i, size_type j) noexcept { return data_[(j * rows_) + i]; }
+    /// @brief Unchecked const access to element `(i, j)`. @param i Row index. @param j Column index. @return Const
+    /// reference to the element.
+    [[nodiscard]] const T& operator()(size_type i, size_type j) const noexcept { return data_[(j * rows_) + i]; }
 
     /**
      * @brief Bounds-checked access to element `(i, j)`.
@@ -304,7 +298,8 @@ public:
     /// @brief Const pointer to the contiguous column-major buffer. @return Const buffer pointer.
     [[nodiscard]] const T* data() const noexcept { return data_.data(); }
 
-    /// @brief The backing `Vector` (logical length `size()`); the seam for the elementwise surface. @return Reference to the backing Vector.
+    /// @brief The backing `Vector` (logical length `size()`); the seam for the elementwise surface. @return Reference
+    /// to the backing Vector.
     [[nodiscard]] storage& as_vector() noexcept { return data_; }
     /// @brief The backing `Vector` (const). @return Const reference to the backing Vector.
     [[nodiscard]] const storage& as_vector() const noexcept { return data_; }
@@ -352,9 +347,11 @@ public:
         data_.add_scaled(a, x.data_);
         return *this;
     }
-    /// @brief `this <- this + x` (elementwise). @param x Same-shape operand. @return `*this`. @throws std::invalid_argument on a shape mismatch.
+    /// @brief `this <- this + x` (elementwise). @param x Same-shape operand. @return `*this`. @throws
+    /// std::invalid_argument on a shape mismatch.
     DenseMatrix& operator+=(const DenseMatrix& x) { return add_scaled(T(1), x); }
-    /// @brief `this <- this - x` (elementwise). @param x Same-shape operand. @return `*this`. @throws std::invalid_argument on a shape mismatch.
+    /// @brief `this <- this - x` (elementwise). @param x Same-shape operand. @return `*this`. @throws
+    /// std::invalid_argument on a shape mismatch.
     DenseMatrix& operator-=(const DenseMatrix& x) { return add_scaled(T(-1), x); }
 
     /**
@@ -388,7 +385,8 @@ public:
         data_.abs();
         return *this;
     }
-    /// @brief In place square root `this_ij <- sqrt(this_ij)`. @return `*this`. @note A negative element yields NaN (no exception).
+    /// @brief In place square root `this_ij <- sqrt(this_ij)`. @return `*this`. @note A negative element yields NaN (no
+    /// exception).
     DenseMatrix& sqrt()
     {
         data_.sqrt();
@@ -412,25 +410,29 @@ public:
         data_.expm1();
         return *this;
     }
-    /// @brief In place natural logarithm `this_ij <- log(this_ij)`. @return `*this`. @note Defined for positive elements; zero yields -inf, negatives NaN.
+    /// @brief In place natural logarithm `this_ij <- log(this_ij)`. @return `*this`. @note Defined for positive
+    /// elements; zero yields -inf, negatives NaN.
     DenseMatrix& log()
     {
         data_.log();
         return *this;
     }
-    /// @brief In place base-2 logarithm `this_ij <- log2(this_ij)`. @return `*this`. @note Defined for positive elements.
+    /// @brief In place base-2 logarithm `this_ij <- log2(this_ij)`. @return `*this`. @note Defined for positive
+    /// elements.
     DenseMatrix& log2()
     {
         data_.log2();
         return *this;
     }
-    /// @brief In place base-10 logarithm `this_ij <- log10(this_ij)`. @return `*this`. @note Defined for positive elements.
+    /// @brief In place base-10 logarithm `this_ij <- log10(this_ij)`. @return `*this`. @note Defined for positive
+    /// elements.
     DenseMatrix& log10()
     {
         data_.log10();
         return *this;
     }
-    /// @brief In place `this_ij <- log(1 + this_ij)`, accurate near zero. @return `*this`. @note Defined for elements > -1.
+    /// @brief In place `this_ij <- log(1 + this_ij)`, accurate near zero. @return `*this`. @note Defined for elements >
+    /// -1.
     DenseMatrix& log1p()
     {
         data_.log1p();
@@ -460,13 +462,15 @@ public:
         data_.tanh();
         return *this;
     }
-    /// @brief In place arc sine (radians) `this_ij <- asin(this_ij)`. @return `*this`. @note Defined for elements in [-1, 1].
+    /// @brief In place arc sine (radians) `this_ij <- asin(this_ij)`. @return `*this`. @note Defined for elements in
+    /// [-1, 1].
     DenseMatrix& asin()
     {
         data_.asin();
         return *this;
     }
-    /// @brief In place arc cosine (radians) `this_ij <- acos(this_ij)`. @return `*this`. @note Defined for elements in [-1, 1].
+    /// @brief In place arc cosine (radians) `this_ij <- acos(this_ij)`. @return `*this`. @note Defined for elements in
+    /// [-1, 1].
     DenseMatrix& acos()
     {
         data_.acos();
@@ -478,7 +482,8 @@ public:
         data_.asinh();
         return *this;
     }
-    /// @brief In place inverse hyperbolic cosine `this_ij <- acosh(this_ij)`. @return `*this`. @note Defined for elements >= 1.
+    /// @brief In place inverse hyperbolic cosine `this_ij <- acosh(this_ij)`. @return `*this`. @note Defined for
+    /// elements >= 1.
     DenseMatrix& acosh()
     {
         data_.acosh();
@@ -490,7 +495,8 @@ public:
         data_.atan();
         return *this;
     }
-    /// @brief In place inverse hyperbolic tangent `this_ij <- atanh(this_ij)`. @return `*this`. @note Defined for elements in (-1, 1).
+    /// @brief In place inverse hyperbolic tangent `this_ij <- atanh(this_ij)`. @return `*this`. @note Defined for
+    /// elements in (-1, 1).
     DenseMatrix& atanh()
     {
         data_.atanh();
@@ -515,11 +521,10 @@ public:
         const size_type xlen = (op == Transpose::None) ? cols_ : rows_;
         const size_type ylen = (op == Transpose::None) ? rows_ : cols_;
         if (x.size() != xlen || y.size() != ylen) {
-            throw std::invalid_argument{
-                "miscibility::instrument::DenseMatrix matrix-vector size mismatch"};
+            throw std::invalid_argument{"miscibility::instrument::DenseMatrix matrix-vector size mismatch"};
         }
-        detail::gemv<T>(detail::to_cblas(op), static_cast<int>(rows_), static_cast<int>(cols_),
-                        alpha, data(), static_cast<int>(rows_), x.data(), beta, y.data());
+        detail::gemv<T>(detail::to_cblas(op), static_cast<int>(rows_), static_cast<int>(cols_), alpha, data(),
+                        static_cast<int>(rows_), x.data(), beta, y.data());
     }
 
     /**
@@ -536,7 +541,8 @@ public:
         return y;
     }
 
-    /// @brief `A*x` as a fresh vector. @param x Operand of length `columns()`. @return The product. @throws std::invalid_argument on a length mismatch.
+    /// @brief `A*x` as a fresh vector. @param x Operand of length `columns()`. @return The product. @throws
+    /// std::invalid_argument on a length mismatch.
     [[nodiscard]] Vector<T> operator*(const Vector<T>& x) const { return multiply(x); }
 
     // -- matrix-matrix product (CBLAS gemm) -----------------------------------
@@ -560,13 +566,11 @@ public:
         const size_type kb = (opB == Transpose::None) ? b.rows() : b.columns();
         const size_type n = (opB == Transpose::None) ? b.columns() : b.rows();
         if (k != kb || c.rows() != m || c.columns() != n) {
-            throw std::invalid_argument{
-                "miscibility::instrument::DenseMatrix matrix-matrix size mismatch"};
+            throw std::invalid_argument{"miscibility::instrument::DenseMatrix matrix-matrix size mismatch"};
         }
-        detail::gemm<T>(detail::to_cblas(opA), detail::to_cblas(opB), static_cast<int>(m),
-                        static_cast<int>(n), static_cast<int>(k), alpha, data(),
-                        static_cast<int>(rows_), b.data(), static_cast<int>(b.rows()), beta,
-                        c.data(), static_cast<int>(c.rows()));
+        detail::gemm<T>(detail::to_cblas(opA), detail::to_cblas(opB), static_cast<int>(m), static_cast<int>(n),
+                        static_cast<int>(k), alpha, data(), static_cast<int>(rows_), b.data(),
+                        static_cast<int>(b.rows()), beta, c.data(), static_cast<int>(c.rows()));
     }
 
     /**
@@ -587,14 +591,17 @@ public:
         return c;
     }
 
-    /// @brief `A*B` as a fresh matrix. @param b Right operand. @return The product. @throws std::invalid_argument on an inner-dimension mismatch.
+    /// @brief `A*B` as a fresh matrix. @param b Right operand. @return The product. @throws std::invalid_argument on an
+    /// inner-dimension mismatch.
     [[nodiscard]] DenseMatrix<T> operator*(const DenseMatrix<T>& b) const { return multiply(b); }
 
     // -- factorization entry point --------------------------------------------
 
-    /// @brief LU-factorize a *copy* of this matrix (the matrix is preserved). @return The factorization. @throws std::invalid_argument if non-square.
+    /// @brief LU-factorize a *copy* of this matrix (the matrix is preserved). @return The factorization. @throws
+    /// std::invalid_argument if non-square.
     [[nodiscard]] LUFactorization<T> lu() const&;
-    /// @brief LU-factorize by *moving* this matrix's buffer when it is a dynamic rvalue (the source is left empty 0x0; a static rvalue is copied). @return The factorization. @throws std::invalid_argument if non-square.
+    /// @brief LU-factorize by *moving* this matrix's buffer when it is a dynamic rvalue (the source is left empty 0x0;
+    /// a static rvalue is copied). @return The factorization. @throws std::invalid_argument if non-square.
     [[nodiscard]] LUFactorization<T> lu() &&;
 
 private:
@@ -609,9 +616,9 @@ private:
     template<Scalar, std::size_t> friend class Vector;
     template<Scalar> friend class LUFactorization;
 
-    storage data_{};          ///< Column-major buffer (one contiguous backing Vector).
-    size_type rows_{0};       ///< Logical row count.
-    size_type cols_{0};       ///< Logical column count.
+    storage data_{};    ///< Column-major buffer (one contiguous backing Vector).
+    size_type rows_{0}; ///< Logical row count.
+    size_type cols_{0}; ///< Logical column count.
 };
 
 // ---------------------------------------------------------------------------
@@ -626,38 +633,37 @@ using lapack_int = int;
 // The LAPACK Fortran interface (provided by OpenBLAS). It is natively column-major, matching the
 // DenseMatrix storage with no transpose; <lapacke.h> is deliberately not required.
 extern "C" {
-void sgetrf_(const lapack_int* m, const lapack_int* n, float* a, const lapack_int* lda,
-             lapack_int* ipiv, lapack_int* info);
-void dgetrf_(const lapack_int* m, const lapack_int* n, double* a, const lapack_int* lda,
-             lapack_int* ipiv, lapack_int* info);
-void sgetrs_(const char* trans, const lapack_int* n, const lapack_int* nrhs, const float* a,
-             const lapack_int* lda, const lapack_int* ipiv, float* b, const lapack_int* ldb,
+void sgetrf_(const lapack_int* m, const lapack_int* n, float* a, const lapack_int* lda, lapack_int* ipiv,
              lapack_int* info);
-void dgetrs_(const char* trans, const lapack_int* n, const lapack_int* nrhs, const double* a,
-             const lapack_int* lda, const lapack_int* ipiv, double* b, const lapack_int* ldb,
+void dgetrf_(const lapack_int* m, const lapack_int* n, double* a, const lapack_int* lda, lapack_int* ipiv,
              lapack_int* info);
+void sgetrs_(const char* trans, const lapack_int* n, const lapack_int* nrhs, const float* a, const lapack_int* lda,
+             const lapack_int* ipiv, float* b, const lapack_int* ldb, lapack_int* info);
+void dgetrs_(const char* trans, const lapack_int* n, const lapack_int* nrhs, const double* a, const lapack_int* lda,
+             const lapack_int* ipiv, double* b, const lapack_int* ldb, lapack_int* info);
 }
 
 /// @internal @brief Dispatch `?getrf` on @p T: in-place LU factorization `P*A = L*U`.
 template<Scalar T>
-void getrf(lapack_int m, lapack_int n, T* a, lapack_int lda, lapack_int* ipiv,
-           lapack_int* info) noexcept
+void getrf(lapack_int m, lapack_int n, T* a, lapack_int lda, lapack_int* ipiv, lapack_int* info) noexcept
 {
     if constexpr (std::same_as<T, float>) {
         sgetrf_(&m, &n, a, &lda, ipiv, info);
-    } else {
+    }
+    else {
         dgetrf_(&m, &n, a, &lda, ipiv, info);
     }
 }
 
 /// @internal @brief Dispatch `?getrs` on @p T: solve from an existing LU factorization.
 template<Scalar T>
-void getrs(char trans, lapack_int n, lapack_int nrhs, const T* a, lapack_int lda,
-           const lapack_int* ipiv, T* b, lapack_int ldb, lapack_int* info) noexcept
+void getrs(char trans, lapack_int n, lapack_int nrhs, const T* a, lapack_int lda, const lapack_int* ipiv, T* b,
+           lapack_int ldb, lapack_int* info) noexcept
 {
     if constexpr (std::same_as<T, float>) {
         sgetrs_(&trans, &n, &nrhs, a, &lda, ipiv, b, &ldb, info);
-    } else {
+    }
+    else {
         dgetrs_(&trans, &n, &nrhs, a, &lda, ipiv, b, &ldb, info);
     }
 }
@@ -686,8 +692,7 @@ void getrs(char trans, lapack_int n, lapack_int nrhs, const T* a, lapack_int lda
  * @note Always heap-backed, regardless of the source matrix's shape: a static source is copied
  * into a dynamic internal matrix.
  */
-template<Scalar T>
-class LUFactorization {
+template<Scalar T> class LUFactorization {
 public:
     using value_type = T;          ///< Element type.
     using size_type = std::size_t; ///< Dimension / index type.
@@ -701,11 +706,10 @@ public:
      * @throws std::runtime_error on an internal LAPACK argument error.
      */
     template<std::size_t R, std::size_t C>
-    explicit LUFactorization(const DenseMatrix<T, R, C>& a)
+    explicit LUFactorization(const DenseMatrix<T, R, C>& a) : lu_(DenseMatrix<T>(a.rows(), a.columns())), n_(a.rows())
     {
         require_square(a.rows(), a.columns());
-        n_ = a.rows();
-        lu_ = DenseMatrix<T>(a.rows(), a.columns());
+
         std::copy_n(a.data(), a.size(), lu_.data());
         factor();
     }
@@ -717,11 +721,10 @@ public:
      * @throws std::invalid_argument if @p a is not square.
      * @throws std::runtime_error on an internal LAPACK argument error.
      */
-    explicit LUFactorization(DenseMatrix<T>&& a)
+    explicit LUFactorization(DenseMatrix<T>&& a) : lu_(std::move(a)), n_(a.rows())
     {
         require_square(a.rows(), a.columns());
-        n_ = a.rows();
-        lu_ = std::move(a);
+
         a = DenseMatrix<T>{}; // leave the moved-from source a valid empty 0x0
         factor();
     }
@@ -750,9 +753,8 @@ public:
         }
         std::copy_n(b.data(), n_, x.data()); // getrs overwrites its RHS with the solution
         detail::lapack_int info = 0;
-        detail::getrs<T>('N', static_cast<detail::lapack_int>(n_), 1, lu_.data(),
-                         static_cast<detail::lapack_int>(n_), pivots_.data(), x.data(),
-                         static_cast<detail::lapack_int>(n_), &info);
+        detail::getrs<T>('N', static_cast<detail::lapack_int>(n_), 1, lu_.data(), static_cast<detail::lapack_int>(n_),
+                         pivots_.data(), x.data(), static_cast<detail::lapack_int>(n_), &info);
         if (info < 0) {
             throw std::runtime_error{"miscibility::instrument::LUFactorization: LAPACK argument error"};
         }
@@ -777,8 +779,7 @@ private:
     static void require_square(size_type r, size_type c)
     {
         if (r != c) {
-            throw std::invalid_argument{
-                "miscibility::instrument::LUFactorization requires a square matrix"};
+            throw std::invalid_argument{"miscibility::instrument::LUFactorization requires a square matrix"};
         }
     }
 
@@ -791,28 +792,26 @@ private:
         }
         pivots_.resize(n_);
         detail::lapack_int info = 0;
-        detail::getrf<T>(static_cast<detail::lapack_int>(n_), static_cast<detail::lapack_int>(n_),
-                         lu_.data(), static_cast<detail::lapack_int>(n_), pivots_.data(), &info);
+        detail::getrf<T>(static_cast<detail::lapack_int>(n_), static_cast<detail::lapack_int>(n_), lu_.data(),
+                         static_cast<detail::lapack_int>(n_), pivots_.data(), &info);
         if (info < 0) {
             throw std::runtime_error{"miscibility::instrument::LUFactorization: LAPACK argument error"};
         }
         singular_ = (info > 0);
     }
 
-    DenseMatrix<T> lu_{};                       ///< Packed L\\U factors (overwritten in place).
-    std::vector<detail::lapack_int> pivots_{};  ///< Row pivots from getrf.
-    bool singular_{false};                      ///< Set when getrf reports a zero pivot.
-    size_type n_{0};                            ///< Order of the square system.
+    DenseMatrix<T> lu_{};                    ///< Packed L\\U factors (overwritten in place).
+    std::vector<detail::lapack_int> pivots_; ///< Row pivots from getrf.
+    bool singular_{false};                   ///< Set when getrf reports a zero pivot.
+    size_type n_{0};                         ///< Order of the square system.
 };
 
-template<Scalar T, std::size_t Rows, std::size_t Cols>
-LUFactorization<T> DenseMatrix<T, Rows, Cols>::lu() const&
+template<Scalar T, std::size_t Rows, std::size_t Cols> LUFactorization<T> DenseMatrix<T, Rows, Cols>::lu() const&
 {
     return LUFactorization<T>{*this};
 }
 
-template<Scalar T, std::size_t Rows, std::size_t Cols>
-LUFactorization<T> DenseMatrix<T, Rows, Cols>::lu() &&
+template<Scalar T, std::size_t Rows, std::size_t Cols> LUFactorization<T> DenseMatrix<T, Rows, Cols>::lu() &&
 {
     return LUFactorization<T>{std::move(*this)};
 }

@@ -1,14 +1,12 @@
 // test_matrix_blas3.cpp -- unit tests for the DenseMatrix matrix-matrix product
 // (CBLAS gemm): multiply, multiply_into, operator*. boost/ut.
 
+#include "instrument/matrix.hpp"
 
 #include <boost/ut.hpp>
-
 #include <cmath>
 #include <cstddef>
 #include <vector>
-
-#include "instrument/matrix.hpp"
 
 namespace mi = miscibility::instrument;
 
@@ -94,10 +92,10 @@ int main()
             mi::DenseMatrix<double> b{{5, 6}, {7, 8}};
             mi::DenseMatrix<double> c{{1, 1}, {1, 1}};
             a.multiply_into(b, c, 2.0, 3.0); // 2*A*B + 3*C
-            expect(close(c(0, 0), 41.0)); // 41
-            expect(close(c(0, 1), 47.0)); // 47
-            expect(close(c(1, 0), 89.0)); // 89
-            expect(close(c(1, 1), 103.0)); // 103
+            expect(close(c(0, 0), 41.0));    // 41
+            expect(close(c(0, 1), 47.0));    // 47
+            expect(close(c(1, 0), 89.0));    // 89
+            expect(close(c(1, 1), 103.0));   // 103
         };
 
         test("dimension mismatch throws invalid_argument") = [] {
