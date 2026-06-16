@@ -317,6 +317,12 @@ public:
     /// @brief ADL swap: exchange the contents of @p a and @p b.
     friend void swap(DenseMatrix& a, DenseMatrix& b) noexcept { a.swap(b); }
 
+    template<std::size_t R, std::size_t C> DenseMatrix& copy(const DenseMatrix<T, R, C>& src)
+    {
+        (void)src;
+        throw std::runtime_error{"not implemented"};
+    }
+
     // -- elementwise surface (delegates to the backing Vector) ----------------
 
     /// @brief In place scalar scaling `A <- a*A`. @param a Scale factor. @return `*this`, for chaining.
@@ -772,6 +778,12 @@ public:
         Vector<T> x(n_);
         solve_into(b, x);
         return x;
+    }
+
+    LUFactorization& copy(const LUFactorization& src)
+    {
+        (void)src;
+        throw std::runtime_error{"not implemented"};
     }
 
 private:
