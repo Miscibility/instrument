@@ -319,8 +319,11 @@ public:
 
     template<std::size_t R, std::size_t C> DenseMatrix& copy(const DenseMatrix<T, R, C>& src)
     {
-        (void)src;
-        throw std::runtime_error{"not implemented"};
+        if (rows_ != src.rows() || cols_ != src.columns()) {
+            throw std::invalid_argument{"miscibility::instrument::DenseMatrix shape mismatch"};
+        }
+        data_.copy(src.as_vector());
+        return *this;
     }
 
     // -- elementwise surface (delegates to the backing Vector) ----------------
@@ -782,8 +785,13 @@ public:
 
     LUFactorization& copy(const LUFactorization& src)
     {
-        (void)src;
-        throw std::runtime_error{"not implemented"};
+        if (n_ != src.n_) {
+            throw std::invalid_argument{"miscibility::instrument::LUFactorization order mismatch"};
+        }
+        lu_.copy(src.lu_);
+        std::copy_n(src.pivots_.data(), n_, pivots_.data());
+        singular_ = src.singular_;
+        return *this;
     }
 
 private:
