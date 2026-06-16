@@ -381,7 +381,8 @@ public:
     {
     }
 
-    /// @brief Copy-assign via copy-and-swap: strong exception guarantee, self-assignment safe.
+    /// @brief Copy-assign. Reuses the existing buffer with no allocation when the capacities
+    /// already match; otherwise copy-and-swap (strong exception guarantee). Self-assignment safe.
     dynamic_storage& operator=(const dynamic_storage& o)
     {
         if (this != &o) {
@@ -634,6 +635,23 @@ public:
     /// @brief ADL swap: exchange the contents of @p a and @p b.
     friend void swap(Vector& a, Vector& b) noexcept { a.swap(b); }
 
+    /**
+     * @brief Copy the values of @p src into this already-sized vector, in place and without
+     *        allocating.
+     * @tparam M Extent of @p src (any matching-size extent is accepted, static or dynamic).
+     * @param src Source of the same logical size as @c *this; its values overwrite this vector's.
+     * @return `*this`, to allow chaining.
+     * @throws std::invalid_argument if `src.size() != size()`.
+     *
+     * The destination keeps its own storage -- nothing is allocated or resized, so a size mismatch
+     * is a caller error (thrown) rather than a trigger to grow. The zero-pad invariant is preserved:
+     * the copy spans the whole `capacity()` and @p src's pad is already zero. Self-copy is safe.
+     * @code{.cpp}
+     * miscibility::instrument::Vector<double, 5> v1{1, 2, 3, 4, 5};
+     * miscibility::instrument::Vector<double> v2(5);
+     * v2.copy(v1); // v2 now holds v1's values; no allocation, extents may differ
+     * @endcode
+     */
     template<std::size_t M> Vector& copy(const Vector<T, M>& src)
     {
         check_same_size(src.size());
