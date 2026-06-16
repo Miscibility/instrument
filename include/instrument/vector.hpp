@@ -628,6 +628,12 @@ public:
     /// @brief ADL swap: exchange the contents of @p a and @p b.
     friend void swap(Vector& a, Vector& b) noexcept { a.swap(b); }
 
+    template<std::size_t M> Vector& copy(const Vector<T, M>& src)
+    {
+        (void)src;
+        throw std::runtime_error{"not implemented"};
+    }
+
     // -- BLAS-1 numeric operations --------------------------------------------
 
     /**
