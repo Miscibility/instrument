@@ -385,8 +385,14 @@ public:
     dynamic_storage& operator=(const dynamic_storage& o)
     {
         if (this != &o) {
-            dynamic_storage tmp{o};
-            swap(tmp);
+            if (data_ != nullptr && o.data_ != nullptr && capacity_ == o.capacity_) {
+                std::copy_n(o.data_, capacity_, data_); // reuse the buffer: no allocation
+                size_ = o.size_;
+            }
+            else {
+                dynamic_storage tmp{o};
+                swap(tmp);
+            }
         }
         return *this;
     }
@@ -630,8 +636,9 @@ public:
 
     template<std::size_t M> Vector& copy(const Vector<T, M>& src)
     {
-        (void)src;
-        throw std::runtime_error{"not implemented"};
+        check_same_size(src.size());
+        std::copy_n(src.data(), capacity(), data());
+        return *this;
     }
 
     // -- BLAS-1 numeric operations --------------------------------------------
