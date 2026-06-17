@@ -83,6 +83,32 @@ enum class Transpose : std::uint8_t {
     Transposed, ///< Use the transpose: `op(A) == A^T`.
 };
 
+/**
+ * @brief The common matrix-vector seam shared by every matrix type in the library.
+ * @tparam M The candidate matrix type.
+ * @tparam T The element type (an IEEE floating-point @ref Scalar).
+ *
+ * A type @p M models `MatrixOperator` for element type @p T when it exposes a shape
+ * (`rows()` / `columns()`) and the gemv-style in-place matrix-vector product
+ * `multiply_into(x, y, alpha, beta, op)` -- the same surface @ref DenseMatrix provides.
+ * This is the contract a block of a @ref BlockMatrix must satisfy, so any matrix type
+ * (dense, diagonal, sparse, zero, ...) can serve as a block.
+ *
+ * Only the minimal trio is required: the convenience `multiply()` / `operator*` forms
+ * are intentionally *not* part of the concept, since block orchestration needs only the
+ * shape and the accumulating `multiply_into`.
+ *
+ * @code{.cpp}
+ * static_assert(miscibility::instrument::MatrixOperator<miscibility::instrument::DenseMatrix<double>, double>);
+ * @endcode
+ */
+template<class M, class T>
+concept MatrixOperator = Scalar<T> && requires(const M m, const Vector<T>& x, Vector<T>& y, T s, Transpose op) {
+    { m.rows() } -> std::convertible_to<std::size_t>;
+    { m.columns() } -> std::convertible_to<std::size_t>;
+    m.multiply_into(x, y, s, s, op);
+};
+
 /// @namespace miscibility::instrument::detail
 /// @brief Implementation details. Not part of the public API; documented for maintainers.
 namespace detail {
