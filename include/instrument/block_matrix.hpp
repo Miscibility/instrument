@@ -44,6 +44,7 @@
 #include "instrument/matrix.hpp"
 #include "instrument/vector.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <initializer_list>
 #include <memory>
@@ -103,21 +104,66 @@ public:
 
     // -- BLAS-1 operations (block-wise orchestration) -------------------------
 
-    T dot(const BlockVector<T>& /*other*/) const { throw std::runtime_error{"not implemented"}; }
+    [[nodiscard]] T dot(const BlockVector<T>& other) const
+    {
+        check_conformable(other);
+        T sum{};
+        for (size_type k = 0; k < blocks_.size(); ++k) {
+            sum += blocks_[k].dot(other.blocks_[k]);
+        }
+        return sum;
+    }
 
-    // noexcept stubs cannot throw (that would std::terminate the test binary), so they return a
-    // wrong sentinel / do nothing; their tests fail via assertions until tdd-3 fills them in.
-    [[nodiscard]] T euclidean_norm() const noexcept { return T(-1); }
+    [[nodiscard]] T euclidean_norm() const noexcept
+    {
+        T sum_squares{};
+        for (const auto& b : blocks_) {
+            sum_squares += b.dot(b);
+        }
+        return std::sqrt(sum_squares);
+    }
 
-    [[nodiscard]] T absolute_sum() const noexcept { return T(-1); }
+    [[nodiscard]] T absolute_sum() const noexcept
+    {
+        T sum{};
+        for (const auto& b : blocks_) {
+            sum += b.absolute_sum();
+        }
+        return sum;
+    }
 
-    BlockVector& add_scaled(T /*a*/, const BlockVector<T>& /*x*/) { throw std::runtime_error{"not implemented"}; }
+    BlockVector& add_scaled(T a, const BlockVector<T>& x)
+    {
+        check_conformable(x);
+        for (size_type k = 0; k < blocks_.size(); ++k) {
+            blocks_[k].add_scaled(a, x.blocks_[k]);
+        }
+        return *this;
+    }
 
-    BlockVector& scale(T /*a*/) noexcept { return *this; }
+    BlockVector& scale(T a) noexcept
+    {
+        for (auto& b : blocks_) {
+            b.scale(a);
+        }
+        return *this;
+    }
 
-    BlockVector& copy(const BlockVector<T>& /*src*/) { throw std::runtime_error{"not implemented"}; }
+    BlockVector& copy(const BlockVector<T>& src)
+    {
+        check_conformable(src);
+        for (size_type k = 0; k < blocks_.size(); ++k) {
+            blocks_[k].copy(src.blocks_[k]);
+        }
+        return *this;
+    }
 
-    void fill(T /*value*/) noexcept {}
+    void fill(T value) noexcept
+    {
+        for (auto& b : blocks_) {
+            b.fill(value);
+        }
+    }
 
     // -- convenience operators (mirror Vector) --------------------------------
 
@@ -128,7 +174,17 @@ public:
 
 private:
     /// @brief Throw if @p other is not conformable (block count / per-block sizes) with this vector.
-    void check_conformable(const BlockVector<T>& /*other*/) const { throw std::runtime_error{"not implemented"}; }
+    void check_conformable(const BlockVector<T>& other) const
+    {
+        if (other.blocks_.size() != blocks_.size()) {
+            throw std::invalid_argument{"miscibility::instrument::BlockVector block-count mismatch"};
+        }
+        for (size_type k = 0; k < blocks_.size(); ++k) {
+            if (other.blocks_[k].size() != blocks_[k].size()) {
+                throw std::invalid_argument{"miscibility::instrument::BlockVector sub-vector size mismatch"};
+            }
+        }
+    }
 
     std::vector<Vector<T>> blocks_; ///< The owned sub-vectors.
 };
