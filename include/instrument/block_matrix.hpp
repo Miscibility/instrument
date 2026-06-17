@@ -45,29 +45,24 @@ public:
 
     /// @brief Access sub-vector @p i (checked). @param i Block index. @return The sub-vector.
     /// @throws std::out_of_range if @p i is out of range.
-    [[nodiscard]] Vector<T>& block(size_type i)
-    {
-        (void)i;
-        throw std::runtime_error{"not implemented"};
-    }
+    [[nodiscard]] Vector<T>& block(size_type i) { return blocks_.at(i); }
 
     /// @brief Access sub-vector @p i (checked, const). @param i Block index. @return The sub-vector.
     /// @throws std::out_of_range if @p i is out of range.
-    [[nodiscard]] const Vector<T>& block(size_type i) const
-    {
-        (void)i;
-        throw std::runtime_error{"not implemented"};
-    }
+    [[nodiscard]] const Vector<T>& block(size_type i) const { return blocks_.at(i); }
 
     /// @brief Total length summed across every block. @return The total element count.
-    [[nodiscard]] size_type size() const { throw std::runtime_error{"not implemented"}; }
+    [[nodiscard]] size_type size() const
+    {
+        size_type total = 0;
+        for (const auto& b : blocks_) {
+            total += b.size();
+        }
+        return total;
+    }
 
     /// @brief Append a sub-vector. @param v The sub-vector to append (moved in).
-    void push_block(Vector<T> v)
-    {
-        (void)v;
-        throw std::runtime_error{"not implemented"};
-    }
+    void push_block(Vector<T> v) { blocks_.push_back(std::move(v)); }
 
 private:
     std::vector<Vector<T>> blocks_; ///< The owned sub-vectors.
@@ -113,16 +108,11 @@ public:
     /// @brief Wrap (move in) a concrete matrix. @param matrix The matrix to type-erase.
     explicit AnyMatrixModel(M matrix) : matrix_(std::move(matrix)) {}
 
-    [[nodiscard]] size_type rows() const override { throw std::runtime_error{"not implemented"}; }
-    [[nodiscard]] size_type columns() const override { throw std::runtime_error{"not implemented"}; }
+    [[nodiscard]] size_type rows() const override { return matrix_.rows(); }
+    [[nodiscard]] size_type columns() const override { return matrix_.columns(); }
     void multiply_into(const Vector<T>& x, Vector<T>& y, T alpha, T beta, Transpose op) const override
     {
-        (void)x;
-        (void)y;
-        (void)alpha;
-        (void)beta;
-        (void)op;
-        throw std::runtime_error{"not implemented"};
+        matrix_.multiply_into(x, y, alpha, beta, op);
     }
 
     /// @brief Recover the wrapped concrete object. @return Reference to the stored matrix.
@@ -168,28 +158,21 @@ public:
         requires MatrixOperator<M, T>
     void set_block(size_type i, size_type j, M matrix)
     {
-        (void)i;
-        (void)j;
-        (void)matrix;
-        throw std::runtime_error{"not implemented"};
+        grid_.at(flat_index(i, j)) = std::make_unique<detail::AnyMatrixModel<T, M>>(std::move(matrix));
     }
 
     /// @brief Access the type-erased block at `(i, j)`. @param i Block-row. @param j Block-col.
     /// @return The type-erased block. @throws std::out_of_range if out of grid; std::logic_error if unset.
     [[nodiscard]] detail::AnyMatrixOperator<T>& block(size_type i, size_type j)
     {
-        (void)i;
-        (void)j;
-        throw std::runtime_error{"not implemented"};
+        return *cell(i, j);
     }
 
     /// @brief Access the type-erased block at `(i, j)` (const). @param i Block-row. @param j Block-col.
     /// @return The type-erased block. @throws std::out_of_range if out of grid; std::logic_error if unset.
     [[nodiscard]] const detail::AnyMatrixOperator<T>& block(size_type i, size_type j) const
     {
-        (void)i;
-        (void)j;
-        throw std::runtime_error{"not implemented"};
+        return *cell(i, j);
     }
 
     /// @brief Recover the underlying concrete object at `(i, j)`.
@@ -197,9 +180,7 @@ public:
     /// @throws std::out_of_range if out of grid; std::bad_cast if the block is not an @p M.
     template<class M> [[nodiscard]] M& block_as(size_type i, size_type j)
     {
-        (void)i;
-        (void)j;
-        throw std::runtime_error{"not implemented"};
+        return dynamic_cast<detail::AnyMatrixModel<T, M>&>(block(i, j)).underlying();
     }
 
     /// @brief Recover the underlying concrete object at `(i, j)` (const).
@@ -207,15 +188,28 @@ public:
     /// @throws std::out_of_range if out of grid; std::bad_cast if the block is not an @p M.
     template<class M> [[nodiscard]] const M& block_as(size_type i, size_type j) const
     {
-        (void)i;
-        (void)j;
-        throw std::runtime_error{"not implemented"};
+        return dynamic_cast<const detail::AnyMatrixModel<T, M>&>(block(i, j)).underlying();
     }
 
     /// @brief Total row count = Σ of block-row heights. @return The row count.
-    [[nodiscard]] size_type rows() const { throw std::runtime_error{"not implemented"}; }
+    [[nodiscard]] size_type rows() const
+    {
+        size_type total = 0;
+        for (size_type i = 0; i < block_rows_; ++i) {
+            total += block(i, 0).rows();
+        }
+        return total;
+    }
+
     /// @brief Total column count = Σ of block-column widths. @return The column count.
-    [[nodiscard]] size_type columns() const { throw std::runtime_error{"not implemented"}; }
+    [[nodiscard]] size_type columns() const
+    {
+        size_type total = 0;
+        for (size_type j = 0; j < block_cols_; ++j) {
+            total += block(0, j).columns();
+        }
+        return total;
+    }
 
     /// @brief Block matrix-vector product into a destination: `y <- alpha*op(A)*x + beta*y`, block-wise.
     /// @param x Operand block vector. @param y Destination block vector. @param alpha Product scale.
@@ -224,31 +218,101 @@ public:
     void multiply_into(const BlockVector<T>& x, BlockVector<T>& y, T alpha = T(1), T beta = T(0),
                        Transpose op = Transpose::None) const
     {
-        (void)x;
-        (void)y;
-        (void)alpha;
-        (void)beta;
-        (void)op;
-        throw std::runtime_error{"not implemented"};
+        // TODO: make this a pre-processed step done once? Then the check is very simple during multiply.
+        // Gather each block-row's height and block-column's width, validating that the grid is
+        // fully populated and that the shared dimensions are consistent across the grid.
+        std::vector<size_type> heights(block_rows_);
+        std::vector<size_type> widths(block_cols_);
+        for (size_type i = 0; i < block_rows_; ++i) {
+            for (size_type j = 0; j < block_cols_; ++j) {
+                const detail::AnyMatrixOperator<T>& a = block(i, j); // throws logic_error if unset
+                if (j == 0) {
+                    heights[i] = a.rows();
+                } else if (a.rows() != heights[i]) {
+                    throw std::invalid_argument{
+                        "miscibility::instrument::BlockMatrix inconsistent block-row heights"};
+                }
+                if (i == 0) {
+                    widths[j] = a.columns();
+                } else if (a.columns() != widths[j]) {
+                    throw std::invalid_argument{
+                        "miscibility::instrument::BlockMatrix inconsistent block-column widths"};
+                }
+            }
+        }
+
+        // For None the operand spans the block-columns and the result the block-rows; Transposed
+        // swaps the two. `src`/`dst` name the operand/result sizes for the active orientation.
+        const std::vector<size_type>& src = (op == Transpose::None) ? widths : heights;
+        const std::vector<size_type>& dst = (op == Transpose::None) ? heights : widths;
+        if (x.block_count() != src.size() || y.block_count() != dst.size()) {
+            throw std::invalid_argument{"miscibility::instrument::BlockMatrix operand block-count mismatch"};
+        }
+        for (size_type k = 0; k < src.size(); ++k) {
+            if (x.block(k).size() != src[k]) {
+                throw std::invalid_argument{"miscibility::instrument::BlockMatrix operand sub-vector size mismatch"};
+            }
+        }
+        for (size_type k = 0; k < dst.size(); ++k) {
+            if (y.block(k).size() != dst[k]) {
+                throw std::invalid_argument{"miscibility::instrument::BlockMatrix result sub-vector size mismatch"};
+            }
+        }
+
+        // Orchestrate: accumulate every contributing block into each destination sub-vector. The
+        // first contribution applies the caller's beta; the rest use beta = 1 to sum in place.
+        for (size_type d = 0; d < dst.size(); ++d) {
+            for (size_type s = 0; s < src.size(); ++s) {
+                const size_type i = (op == Transpose::None) ? d : s;
+                const size_type j = (op == Transpose::None) ? s : d;
+                const T beta_s = (s == 0) ? beta : T(1);
+                block(i, j).multiply_into(x.block(s), y.block(d), alpha, beta_s, op);
+            }
+        }
     }
 
     /// @brief Block matrix-vector product, allocating the result. @param x Operand. @param op None/Transposed.
     /// @return The product `op(A)*x` as a fresh block vector.
     [[nodiscard]] BlockVector<T> multiply(const BlockVector<T>& x, Transpose op = Transpose::None) const
     {
-        (void)x;
-        (void)op;
-        throw std::runtime_error{"not implemented"};
+        BlockVector<T> y;
+        if (op == Transpose::None) {
+            for (size_type i = 0; i < block_rows_; ++i) {
+                y.push_block(Vector<T>(block(i, 0).rows()));
+            }
+        } else {
+            for (size_type j = 0; j < block_cols_; ++j) {
+                y.push_block(Vector<T>(block(0, j).columns()));
+            }
+        }
+        multiply_into(x, y, T(1), T(0), op);
+        return y;
     }
 
     /// @brief Block matrix-vector product `A*x`. @param x Operand. @return The product as a fresh block vector.
-    [[nodiscard]] BlockVector<T> operator*(const BlockVector<T>& x) const
-    {
-        (void)x;
-        throw std::runtime_error{"not implemented"};
-    }
+    [[nodiscard]] BlockVector<T> operator*(const BlockVector<T>& x) const { return multiply(x); }
 
 private:
+    /// @brief Row-major flat index into @ref grid_ for cell `(i, j)`, bounds-checked against the grid.
+    /// @throws std::out_of_range if `(i, j)` is outside the grid.
+    [[nodiscard]] size_type flat_index(size_type i, size_type j) const
+    {
+        if (i >= block_rows_ || j >= block_cols_) {
+            throw std::out_of_range{"miscibility::instrument::BlockMatrix block index out of range"};
+        }
+        return (i * block_cols_) + j;
+    }
+
+    /// @brief The (set) block at `(i, j)`. @throws std::out_of_range if out of grid; std::logic_error if unset.
+    [[nodiscard]] const std::unique_ptr<detail::AnyMatrixOperator<T>>& cell(size_type i, size_type j) const
+    {
+        const auto& ptr = grid_.at(flat_index(i, j));
+        if (!ptr) {
+            throw std::logic_error{"miscibility::instrument::BlockMatrix block (i, j) was never set"};
+        }
+        return ptr;
+    }
+
     size_type block_rows_{0};                                       ///< Number of block-rows.
     size_type block_cols_{0};                                       ///< Number of block-columns.
     std::vector<std::unique_ptr<detail::AnyMatrixOperator<T>>> grid_; ///< Row-major grid of blocks.
