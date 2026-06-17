@@ -32,10 +32,7 @@ static_assert(mi::MatrixOperator<mi::CsrMatrix<float, mi::Execution::Parallel>, 
 
 namespace {
 
-template<class T> T default_tol()
-{
-    return std::is_same_v<T, float> ? T(1e-4) : T(1e-10);
-}
+template<class T> T default_tol() { return std::is_same_v<T, float> ? T(1e-4) : T(1e-10); }
 
 template<class T> bool close(T a, T b, T tol = default_tol<T>())
 {
@@ -186,8 +183,7 @@ template<class T, mi::Execution Exec> void register_value_tests(const std::strin
 
     test("empty rows produce exactly beta*y_i (zero when beta==0) " + tag) = [] {
         // Row 1 is empty.
-        mi::SparsityPattern<T> p(3, 3,
-                                 {{.row = 0, .col = 0, .value = T(2)}, {.row = 2, .col = 2, .value = T(3)}});
+        mi::SparsityPattern<T> p(3, 3, {{.row = 0, .col = 0, .value = T(2)}, {.row = 2, .col = 2, .value = T(3)}});
         tf::Executor exec;
         auto a = make_csr<T, Exec>(p, exec);
         mi::Vector<T> x{T(1), T(1), T(1)};
@@ -253,8 +249,7 @@ template<class T, mi::Execution Exec> void register_value_tests(const std::strin
     };
 
     test("wrong-length x or y throws invalid_argument (None) " + tag) = [] {
-        mi::SparsityPattern<T> p(2, 3,
-                                 {{.row = 0, .col = 0, .value = T(1)}, {.row = 1, .col = 2, .value = T(2)}});
+        mi::SparsityPattern<T> p(2, 3, {{.row = 0, .col = 0, .value = T(1)}, {.row = 1, .col = 2, .value = T(2)}});
         tf::Executor exec;
         auto a = make_csr<T, Exec>(p, exec);
         mi::Vector<T> bad_x{T(1), T(1)}; // need length 3
@@ -265,8 +260,7 @@ template<class T, mi::Execution Exec> void register_value_tests(const std::strin
     };
 
     test("wrong-length x or y throws invalid_argument (Transposed) " + tag) = [] {
-        mi::SparsityPattern<T> p(2, 3,
-                                 {{.row = 0, .col = 0, .value = T(1)}, {.row = 1, .col = 2, .value = T(2)}});
+        mi::SparsityPattern<T> p(2, 3, {{.row = 0, .col = 0, .value = T(1)}, {.row = 1, .col = 2, .value = T(2)}});
         tf::Executor exec;
         auto a = make_csr<T, Exec>(p, exec);
         // Transposed: x must have length rows()==2, y length columns()==3.
@@ -274,7 +268,8 @@ template<class T, mi::Execution Exec> void register_value_tests(const std::strin
         expect(throws<std::invalid_argument>([&] { (void)a.multiply(bad_x, mi::Transpose::Transposed); }));
         mi::Vector<T> x{T(1), T(1)};
         mi::Vector<T> bad_y{T(0), T(0)};
-        expect(throws<std::invalid_argument>([&] { a.multiply_into(x, bad_y, T(1), T(0), mi::Transpose::Transposed); }));
+        expect(
+            throws<std::invalid_argument>([&] { a.multiply_into(x, bad_y, T(1), T(0), mi::Transpose::Transposed); }));
     };
 }
 
@@ -283,12 +278,12 @@ mi::SparsityPattern<double> banded(std::size_t n)
 {
     std::vector<mi::MatrixEntry<double>> entries;
     for (std::size_t i = 0; i < n; ++i) {
-        entries.push_back({.row=i, .col=i, .value=2.0});
+        entries.push_back({.row = i, .col = i, .value = 2.0});
         if (i > 0) {
-            entries.push_back({.row=i, .col=i - 1, .value=-1.0});
+            entries.push_back({.row = i, .col = i - 1, .value = -1.0});
         }
         if (i + 1 < n) {
-            entries.push_back({.row=i, .col=i + 1, .value=-1.0});
+            entries.push_back({.row = i, .col = i + 1, .value = -1.0});
         }
     }
     return {n, n, std::span<const mi::MatrixEntry<double>>{entries.data(), entries.size()}};

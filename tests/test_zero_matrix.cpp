@@ -99,8 +99,8 @@ int main()
 
         test("transposed multiply_into honors beta") = [] {
             mi::ZeroMatrix<double> z(3, 4);
-            mi::Vector<double> x{1, 2, 3};        // length rows()
-            mi::Vector<double> y{1, 1, 1, 1};     // length columns()
+            mi::Vector<double> x{1, 2, 3};    // length rows()
+            mi::Vector<double> y{1, 1, 1, 1}; // length columns()
             z.multiply_into(x, y, 1.0, 3.0, mi::Transpose::Transposed);
             expect(close(y[0], 3.0));
             expect(close(y[1], 3.0));
@@ -110,11 +110,11 @@ int main()
 
         test("wrong-length operands throw invalid_argument (None)") = [] {
             mi::ZeroMatrix<double> z(3, 4);
-            mi::Vector<double> bad_x{1, 2, 3};   // should be length 4
+            mi::Vector<double> bad_x{1, 2, 3}; // should be length 4
             expect(throws<std::invalid_argument>([&] { (void)z.multiply(bad_x); }));
 
             mi::Vector<double> x{1, 2, 3, 4};
-            mi::Vector<double> wrong_y{0, 0};    // should be length 3
+            mi::Vector<double> wrong_y{0, 0}; // should be length 3
             expect(throws<std::invalid_argument>([&] { z.multiply_into(x, wrong_y); }));
         };
 
@@ -125,8 +125,8 @@ int main()
 
             mi::Vector<double> x{1, 2, 3};
             mi::Vector<double> wrong_y{0, 0, 0}; // should be length 4 when transposed
-            expect(
-                throws<std::invalid_argument>([&] { z.multiply_into(x, wrong_y, 1.0, 0.0, mi::Transpose::Transposed); }));
+            expect(throws<std::invalid_argument>(
+                [&] { z.multiply_into(x, wrong_y, 1.0, 0.0, mi::Transpose::Transposed); }));
         };
 
         test("rectangular shape reports rows/columns/size/empty") = [] {

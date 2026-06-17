@@ -341,8 +341,8 @@ public:
 
     /// @brief Construct an (empty) grid of the given block dimensions.
     /// @param block_rows Number of block-rows. @param block_cols Number of block-columns.
-    BlockMatrix(size_type block_rows, size_type block_cols)
-        : block_rows_(block_rows), block_cols_(block_cols), grid_(block_rows * block_cols)
+    BlockMatrix(size_type block_rows, size_type block_cols) :
+        block_rows_(block_rows), block_cols_(block_cols), grid_(block_rows * block_cols)
     {
     }
 
@@ -376,17 +376,11 @@ public:
 
     /// @brief Access the type-erased block at `(i, j)`. @param i Block-row. @param j Block-col.
     /// @return The type-erased block. @throws std::out_of_range if out of grid; std::logic_error if unset.
-    [[nodiscard]] detail::AnyMatrixOperator<T>& block(size_type i, size_type j)
-    {
-        return *cell(i, j);
-    }
+    [[nodiscard]] detail::AnyMatrixOperator<T>& block(size_type i, size_type j) { return *cell(i, j); }
 
     /// @brief Access the type-erased block at `(i, j)` (const). @param i Block-row. @param j Block-col.
     /// @return The type-erased block. @throws std::out_of_range if out of grid; std::logic_error if unset.
-    [[nodiscard]] const detail::AnyMatrixOperator<T>& block(size_type i, size_type j) const
-    {
-        return *cell(i, j);
-    }
+    [[nodiscard]] const detail::AnyMatrixOperator<T>& block(size_type i, size_type j) const { return *cell(i, j); }
 
     /**
      * @brief Recover the underlying concrete object at `(i, j)`, undoing the type erasure.
@@ -472,13 +466,14 @@ public:
                 const detail::AnyMatrixOperator<T>& a = block(i, j); // throws logic_error if unset
                 if (j == 0) {
                     heights[i] = a.rows();
-                } else if (a.rows() != heights[i]) {
-                    throw std::invalid_argument{
-                        "miscibility::instrument::BlockMatrix inconsistent block-row heights"};
+                }
+                else if (a.rows() != heights[i]) {
+                    throw std::invalid_argument{"miscibility::instrument::BlockMatrix inconsistent block-row heights"};
                 }
                 if (i == 0) {
                     widths[j] = a.columns();
-                } else if (a.columns() != widths[j]) {
+                }
+                else if (a.columns() != widths[j]) {
                     throw std::invalid_argument{
                         "miscibility::instrument::BlockMatrix inconsistent block-column widths"};
                 }
@@ -534,7 +529,8 @@ public:
             for (size_type i = 0; i < block_rows_; ++i) {
                 y.push_block(Vector<T>(block(i, 0).rows()));
             }
-        } else {
+        }
+        else {
             for (size_type j = 0; j < block_cols_; ++j) {
                 y.push_block(Vector<T>(block(0, j).columns()));
             }
@@ -569,8 +565,8 @@ private:
         return ptr;
     }
 
-    size_type block_rows_{0};                                       ///< Number of block-rows.
-    size_type block_cols_{0};                                       ///< Number of block-columns.
+    size_type block_rows_{0};                                         ///< Number of block-rows.
+    size_type block_cols_{0};                                         ///< Number of block-columns.
     std::vector<std::unique_ptr<detail::AnyMatrixOperator<T>>> grid_; ///< Row-major grid of blocks.
 };
 

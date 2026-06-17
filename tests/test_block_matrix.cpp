@@ -179,7 +179,7 @@ int main()
         };
 
         test("BlockVector with the wrong block count throws invalid_argument") = [&] {
-            auto a = make_hetero(); // expects 2 operand blocks
+            auto a = make_hetero();                              // expects 2 operand blocks
             mi::BlockVector<double> x{mi::Vector<double>{1, 2}}; // only 1 block
             expect(throws<std::invalid_argument>([&] { (void)a.multiply(x); }));
         };
@@ -230,7 +230,8 @@ int main()
 
         test("a CsrMatrix block participates correctly") = [] {
             // 2x2 grid: A00 = CSR diag(1,2), A01/A10 = zero, A11 = [[1,1],[1,1]].
-            mi::SparsityPattern<double> pattern(2, 2, {{.row=0, .col=0, .value=1.0}, {.row=1, .col=1, .value=2.0}});
+            mi::SparsityPattern<double> pattern(
+                2, 2, {{.row = 0, .col = 0, .value = 1.0}, {.row = 1, .col = 1, .value = 2.0}});
             mi::BlockMatrix<double> a(2, 2);
             a.set_block(0, 0, mi::CsrMatrix<double>(pattern));
             a.set_block(0, 1, mi::ZeroMatrix<double>(2, 2));

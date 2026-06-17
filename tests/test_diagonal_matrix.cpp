@@ -179,8 +179,8 @@ int main()
         };
 
         test("matmat shape mismatch throws invalid_argument") = [] {
-            mi::DiagonalMatrix<double> d{2, 3};      // 2x2
-            mi::DenseMatrix<double> b{{1, 2, 3}};    // 1x3, only 1 row
+            mi::DiagonalMatrix<double> d{2, 3};   // 2x2
+            mi::DenseMatrix<double> b{{1, 2, 3}}; // 1x3, only 1 row
             expect(throws<std::invalid_argument>([&] { (void)d.multiply(b); }));
         };
 

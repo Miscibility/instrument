@@ -158,7 +158,7 @@ int main()
         };
 
         test("order mismatch throws invalid_argument") = [] {
-            mi::DenseMatrix<double> a{{2, 1}, {1, 3}};                 // order 2
+            mi::DenseMatrix<double> a{{2, 1}, {1, 3}};                  // order 2
             mi::DenseMatrix<double> b{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}; // order 3
             mi::LUFactorization<double> luA{a};
             mi::LUFactorization<double> luB{b};

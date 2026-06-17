@@ -298,9 +298,9 @@ private:
         singular_ = (zero_count_ > 0);
     }
 
-    Vector<T, N> diag_{};      ///< The diagonal entries.
-    size_type zero_count_{0};  ///< Number of zero diagonal entries (drives @ref singular()).
-    bool singular_{false};     ///< Cached `zero_count_ > 0`.
+    Vector<T, N> diag_{};     ///< The diagonal entries.
+    size_type zero_count_{0}; ///< Number of zero diagonal entries (drives @ref singular()).
+    bool singular_{false};    ///< Cached `zero_count_ > 0`.
 };
 
 } // namespace miscibility::instrument
