@@ -111,8 +111,8 @@ public:
 
     /// @brief Convenience overload taking a braced list of entries. @param rows Row count. @param cols Column count.
     /// @param entries The triplets (see the span constructor). @throws std::out_of_range if any entry is out of range.
-    SparsityPattern(size_type rows, size_type cols, std::initializer_list<MatrixEntry<T>> entries)
-        : SparsityPattern(rows, cols, std::span<const MatrixEntry<T>>{entries.begin(), entries.size()})
+    SparsityPattern(size_type rows, size_type cols, std::initializer_list<MatrixEntry<T>> entries) :
+        SparsityPattern(rows, cols, std::span<const MatrixEntry<T>>{entries.begin(), entries.size()})
     {
     }
 
@@ -130,11 +130,11 @@ public:
     [[nodiscard]] const std::vector<T>& values() const noexcept { return values_; }
 
 private:
-    size_type rows_{0};                    ///< Row count.
-    size_type cols_{0};                    ///< Column count.
-    std::vector<size_type> row_offsets_;   ///< CSR row offsets (length `rows_ + 1`).
+    size_type rows_{0};                     ///< Row count.
+    size_type cols_{0};                     ///< Column count.
+    std::vector<size_type> row_offsets_;    ///< CSR row offsets (length `rows_ + 1`).
     std::vector<size_type> column_indices_; ///< CSR column indices (length `nonzeros()`).
-    std::vector<T> values_;                ///< CSR coalesced values (length `nonzeros()`).
+    std::vector<T> values_;                 ///< CSR coalesced values (length `nonzeros()`).
 };
 
 } // namespace miscibility::instrument

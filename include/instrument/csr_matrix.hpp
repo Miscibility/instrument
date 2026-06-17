@@ -45,13 +45,12 @@
 #include "instrument/sparsity_pattern.hpp"
 #include "instrument/vector.hpp"
 
-#include <taskflow/taskflow.hpp>
-
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <taskflow/taskflow.hpp>
 #include <type_traits>
 #include <vector>
 
@@ -310,11 +309,11 @@ private:
         }
     }
 
-    std::vector<size_type> row_offsets_;   ///< CSR row offsets (length rows_ + 1).
+    std::vector<size_type> row_offsets_;    ///< CSR row offsets (length rows_ + 1).
     std::vector<size_type> column_indices_; ///< CSR column indices (length nonzeros()).
-    std::vector<T> values_{};                 ///< CSR values (length nonzeros()).
-    size_type rows_{0};                       ///< Logical row count.
-    size_type cols_{0};                       ///< Logical column count.
+    std::vector<T> values_{};               ///< CSR values (length nonzeros()).
+    size_type rows_{0};                     ///< Logical row count.
+    size_type cols_{0};                     ///< Logical column count.
 
     /// @internal Non-owning executor reference, present only in the parallel specialization.
     [[no_unique_address]] std::conditional_t<is_parallel, tf::Executor*, no_executor> executor_{};
