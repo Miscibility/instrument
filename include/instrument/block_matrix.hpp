@@ -101,7 +101,35 @@ public:
     /// @brief Append a sub-vector. @param v The sub-vector to append (moved in).
     void push_block(Vector<T> v) { blocks_.push_back(std::move(v)); }
 
+    // -- BLAS-1 operations (block-wise orchestration) -------------------------
+
+    T dot(const BlockVector<T>& /*other*/) const { throw std::runtime_error{"not implemented"}; }
+
+    // noexcept stubs cannot throw (that would std::terminate the test binary), so they return a
+    // wrong sentinel / do nothing; their tests fail via assertions until tdd-3 fills them in.
+    [[nodiscard]] T euclidean_norm() const noexcept { return T(-1); }
+
+    [[nodiscard]] T absolute_sum() const noexcept { return T(-1); }
+
+    BlockVector& add_scaled(T /*a*/, const BlockVector<T>& /*x*/) { throw std::runtime_error{"not implemented"}; }
+
+    BlockVector& scale(T /*a*/) noexcept { return *this; }
+
+    BlockVector& copy(const BlockVector<T>& /*src*/) { throw std::runtime_error{"not implemented"}; }
+
+    void fill(T /*value*/) noexcept {}
+
+    // -- convenience operators (mirror Vector) --------------------------------
+
+    BlockVector& operator*=(T a) noexcept { return scale(a); }
+    BlockVector& operator/=(T a) noexcept { return scale(T(1) / a); }
+    BlockVector& operator+=(const BlockVector& x) { return add_scaled(T(1), x); }
+    BlockVector& operator-=(const BlockVector& x) { return add_scaled(T(-1), x); }
+
 private:
+    /// @brief Throw if @p other is not conformable (block count / per-block sizes) with this vector.
+    void check_conformable(const BlockVector<T>& /*other*/) const { throw std::runtime_error{"not implemented"}; }
+
     std::vector<Vector<T>> blocks_; ///< The owned sub-vectors.
 };
 
