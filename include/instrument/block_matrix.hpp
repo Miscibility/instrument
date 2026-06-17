@@ -1,11 +1,42 @@
 /**
  * @file block_matrix.hpp
- * @brief A grid of type-erased sub-matrices (BlockMatrix) and a sequence of sub-vectors
- *        (BlockVector), supporting the block matrix-vector product `y = A*x`.
+ * @brief A grid of type-erased sub-matrices (@ref miscibility::instrument::BlockMatrix) and a
+ *        sequence of sub-vectors (@ref miscibility::instrument::BlockVector), supporting the block
+ *        matrix-vector product `y = A*x`.
  *
- * SKELETON: every BlockVector/BlockMatrix member below currently throws
- * `std::runtime_error{"not implemented"}` -- this header pins down the interface so the
- * unit tests compile and (uniformly) fail. tdd-3-implement fills in the bodies.
+ * @code{.cpp}
+ * using namespace miscibility::instrument;
+ *
+ * BlockMatrix<double> a(2, 2);                                  // a 2x2 grid of blocks
+ * a.set_block(0, 0, DenseMatrix<double>{{1, 2}, {3, 4}});       // any MatrixOperator type ...
+ * a.set_block(0, 1, ZeroMatrix<double>(2, 2));                  // ... ZeroMatrix fills the gaps
+ * a.set_block(1, 0, DiagonalMatrix<double>{5, 6});             // ... and the blocks may differ
+ * a.set_block(1, 1, DenseMatrix<double>{{7, 8}, {9, 10}});
+ *
+ * BlockVector<double> x{Vector<double>{1, 2}, Vector<double>{3, 4}};
+ * BlockVector<double> y = a * x;                                // y.block(0), y.block(1)
+ * @endcode
+ *
+ * @par What it is
+ * A @ref BlockMatrix is a `block_rows x block_cols` grid of sub-matrices and a @ref BlockVector is
+ * a sequence of sub-vectors; together they support a single operation -- the block matrix-vector
+ * product `y = A*x` (and its gemv variants). Each block may be a *different* concrete matrix type
+ * (a @ref DenseMatrix, @ref DiagonalMatrix, a CSR matrix, @ref ZeroMatrix, ...), so the blocks are
+ * stored type-erased behind the @ref MatrixOperator seam.
+ *
+ * @par Host-side orchestration
+ * The block product is pure host-side orchestration: it loops over the block grid and forwards each
+ * cell to that block's own `multiply_into`, accumulating partial results into the destination
+ * sub-vectors. The real compute therefore lives inside each block; the virtual dispatch is only the
+ * outer loop. This keeps @ref BlockMatrix non-templated on its block types and is GPU-portable -- a
+ * future GPU block type slots in without touching @ref BlockMatrix.
+ *
+ * @par Scope
+ * Only @ref BlockMatrix x @ref BlockVector matrix-vector products are supported: there is no block
+ * matrix-matrix product, and no mixing with plain @ref Vector / @ref DenseMatrix operands.
+ *
+ * @par Header-only
+ * C++23. Builds on @ref Vector and the @ref MatrixOperator seam from @ref matrix.hpp.
  */
 
 #pragma once
@@ -23,8 +54,14 @@
 namespace miscibility::instrument {
 
 /**
- * @brief A sequence of sub-vectors -- the vector operand/result of a @ref BlockMatrix product.
+ * @brief A sequence of sub-vectors -- the vector operand and result of a @ref BlockMatrix product.
  * @tparam T Element type (an IEEE floating-point @ref Scalar).
+ *
+ * A BlockVector owns its blocks (each a @ref Vector). It is the partner type to @ref BlockMatrix:
+ * when computing `y = A*x` the operand @p x is split into one sub-vector per block-column and the
+ * result @p y holds one sub-vector per block-row (the roles flip under @ref Transpose::Transposed).
+ * Blocks may have *different* lengths -- the lengths must match the corresponding block dimensions
+ * of the @ref BlockMatrix, which validates them at product time.
  */
 template<class T> class BlockVector {
 public:
@@ -127,12 +164,28 @@ private:
 } // namespace detail
 
 /**
- * @brief A `block_rows x block_cols` grid of type-erased sub-matrices.
+ * @brief A `block_rows x block_cols` grid of type-erased sub-matrices, modelling a block matrix.
  * @tparam T Element type (an IEEE floating-point @ref Scalar).
  *
- * Each cell holds any type satisfying `MatrixOperator<M, T>`, type-erased behind a
- * `std::unique_ptr<detail::AnyMatrixOperator<T>>`. Cells start empty and must be set (use
- * @ref ZeroMatrix for structural zeros) before a product is taken.
+ * @par Heterogeneous, type-erased blocks
+ * Each cell holds any type satisfying `MatrixOperator<M, T>`, stored type-erased behind a
+ * `std::unique_ptr`. Because the block type is erased, one grid can mix @ref DenseMatrix,
+ * @ref DiagonalMatrix, @ref ZeroMatrix, a CSR matrix, and any future @ref MatrixOperator -- and
+ * @ref BlockMatrix itself stays templated only on the element type @p T.
+ *
+ * @par Populate before use
+ * A freshly constructed grid is *empty*: every cell must be set with set_block() before a product
+ * is taken. There is no implicit zero -- use a right-sized @ref ZeroMatrix for a structural-zero
+ * block. Taking a product (or querying rows()/columns()) while a cell is unset throws
+ * `std::logic_error`.
+ *
+ * @par Lazy dimension checking
+ * Block-row heights and block-column widths are derived from the blocks themselves -- the height of
+ * block-row `I` is the `rows()` of any block in that row, and the width of block-column `J` is the
+ * `columns()` of any block in that column. Because the grid may be filled incrementally, these
+ * dimensions are validated for consistency lazily, at product time, not in set_block().
+ *
+ * @see BlockVector, MatrixOperator, ZeroMatrix
  */
 template<class T> class BlockMatrix {
 public:
@@ -151,9 +204,22 @@ public:
     /// @brief Number of block-columns. @return The block-column count.
     [[nodiscard]] size_type block_columns() const noexcept { return block_cols_; }
 
-    /// @brief Install (move) @p matrix into grid cell `(i, j)`, type-erased.
-    /// @tparam M The concrete matrix type. @param i Block-row. @param j Block-col. @param matrix The block.
-    /// @throws std::out_of_range if `(i, j)` is outside the grid.
+    /**
+     * @brief Install (move) @p matrix into grid cell `(i, j)`, type-erased behind the block seam.
+     *
+     * @p M may be any type satisfying `MatrixOperator<M, T>`, so different cells can hold different
+     * concrete matrix types. Replaces whatever was previously in the cell.
+     *
+     * @code{.cpp}
+     * BlockMatrix<double> a(2, 2);
+     * a.set_block(0, 0, DenseMatrix<double>{{1, 2}, {3, 4}});
+     * a.set_block(0, 1, ZeroMatrix<double>(2, 2)); // explicit structural-zero block
+     * @endcode
+     *
+     * @tparam M The concrete matrix type (must model `MatrixOperator<M, T>`).
+     * @param i Block-row index. @param j Block-column index. @param matrix The block, moved in.
+     * @throws std::out_of_range if `(i, j)` is outside the grid.
+     */
     template<class M>
         requires MatrixOperator<M, T>
     void set_block(size_type i, size_type j, M matrix)
@@ -175,9 +241,22 @@ public:
         return *cell(i, j);
     }
 
-    /// @brief Recover the underlying concrete object at `(i, j)`.
-    /// @tparam M The expected concrete type. @param i Block-row. @param j Block-col. @return The concrete block.
-    /// @throws std::out_of_range if out of grid; std::bad_cast if the block is not an @p M.
+    /**
+     * @brief Recover the underlying concrete object at `(i, j)`, undoing the type erasure.
+     *
+     * Use this to reach a block's concrete API (e.g. read a @ref DenseMatrix entry); @p M must name
+     * the exact type that was passed to set_block() for this cell.
+     *
+     * @code{.cpp}
+     * DenseMatrix<double>& d = a.block_as<DenseMatrix<double>>(0, 0);
+     * double top_left = d(0, 0);
+     * @endcode
+     *
+     * @tparam M The expected concrete type. @param i Block-row. @param j Block-column.
+     * @return Reference to the stored concrete block.
+     * @throws std::out_of_range if `(i, j)` is outside the grid; std::logic_error if the cell is
+     *         unset; std::bad_cast if the stored block is not an @p M.
+     */
     template<class M> [[nodiscard]] M& block_as(size_type i, size_type j)
     {
         return dynamic_cast<detail::AnyMatrixModel<T, M>&>(block(i, j)).underlying();
@@ -211,10 +290,28 @@ public:
         return total;
     }
 
-    /// @brief Block matrix-vector product into a destination: `y <- alpha*op(A)*x + beta*y`, block-wise.
-    /// @param x Operand block vector. @param y Destination block vector. @param alpha Product scale.
-    /// @param beta Destination scale. @param op None or Transposed.
-    /// @throws std::invalid_argument on structural/length mismatch; std::logic_error if a cell is unset.
+    /**
+     * @brief Block matrix-vector product into a pre-sized destination: `y <- alpha*op(A)*x + beta*y`.
+     *
+     * Computed block-wise. For @c None, `y_I <- alpha * Σ_J A_IJ * x_J + beta * y_I`; for
+     * @c Transposed the roles of the block-row index `I` and block-column index `J` swap and each
+     * block is applied transposed. Each destination sub-vector accumulates its contributions in
+     * place: the first contributing block applies the caller's @p beta and the rest use `beta = 1`,
+     * so @p beta scales each destination block exactly once (not once per source block) and no
+     * temporary is needed.
+     *
+     * @param x     Operand block vector. For @c None its `block_count()` and each sub-vector length
+     *              must match the block-column widths; for @c Transposed, the block-row heights.
+     * @param y     Destination block vector, written in place; must already be sized. For @c None
+     *              its `block_count()` and sub-vector lengths must match the block-row heights; for
+     *              @c Transposed, the block-column widths.
+     * @param alpha Scale applied to the product term (default 1).
+     * @param beta  Scale applied to the existing @p y, once per destination block (default 0).
+     * @param op    Whether to apply `A` (@c None) or `A^T` (@c Transposed).
+     * @throws std::logic_error if any grid cell is unset.
+     * @throws std::invalid_argument if block-row heights or block-column widths are inconsistent,
+     *         or if @p x / @p y has the wrong block count or a wrong sub-vector length.
+     */
     void multiply_into(const BlockVector<T>& x, BlockVector<T>& y, T alpha = T(1), T beta = T(0),
                        Transpose op = Transpose::None) const
     {
@@ -271,8 +368,18 @@ public:
         }
     }
 
-    /// @brief Block matrix-vector product, allocating the result. @param x Operand. @param op None/Transposed.
-    /// @return The product `op(A)*x` as a fresh block vector.
+    /**
+     * @brief Block matrix-vector product `op(A)*x`, returning a freshly allocated result.
+     *
+     * Allocates a result @ref BlockVector sized to the block-row heights (or the block-column widths
+     * when @p op is @c Transposed) and fills it via multiply_into() with `beta == 0`.
+     *
+     * @param x  Operand block vector (see multiply_into() for the length rules).
+     * @param op Whether to apply `A` (@c None) or `A^T` (@c Transposed).
+     * @return A new @ref BlockVector holding `op(A)*x`.
+     * @throws std::logic_error if any grid cell is unset; std::invalid_argument on a
+     *         structural/length mismatch (see multiply_into()).
+     */
     [[nodiscard]] BlockVector<T> multiply(const BlockVector<T>& x, Transpose op = Transpose::None) const
     {
         BlockVector<T> y;
@@ -289,7 +396,9 @@ public:
         return y;
     }
 
-    /// @brief Block matrix-vector product `A*x`. @param x Operand. @return The product as a fresh block vector.
+    /// @brief Block matrix-vector product `A*x` (the @c None case of multiply()).
+    /// @param x Operand block vector. @return A new @ref BlockVector holding `A*x`.
+    /// @throws std::logic_error if any cell is unset; std::invalid_argument on a size mismatch.
     [[nodiscard]] BlockVector<T> operator*(const BlockVector<T>& x) const { return multiply(x); }
 
 private:
