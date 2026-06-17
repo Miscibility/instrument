@@ -63,6 +63,15 @@ namespace miscibility::instrument {
  * result @p y holds one sub-vector per block-row (the roles flip under @ref Transpose::Transposed).
  * Blocks may have *different* lengths -- the lengths must match the corresponding block dimensions
  * of the @ref BlockMatrix, which validates them at product time.
+ *
+ * @par BLAS-1 surface
+ * Beyond block access, BlockVector mirrors @ref Vector's BLAS-1 operations -- dot(),
+ * euclidean_norm(), absolute_sum(), add_scaled(), scale(), copy(), fill(), and the `*=` / `/=` /
+ * `+=` / `-=` operators -- so the same Krylov solver code runs unchanged over a @ref Vector or a
+ * BlockVector. Each is pure host-side orchestration: it loops the blocks and forwards to that
+ * block's own @ref Vector member (no cross-block SIMD, no flattening copy). Binary operands must be
+ * *conformable* -- equal block_count() and equal per-block size() -- or `std::invalid_argument` is
+ * thrown.
  */
 template<class T> class BlockVector {
 public:
@@ -103,7 +112,20 @@ public:
     void push_block(Vector<T> v) { blocks_.push_back(std::move(v)); }
 
     // -- BLAS-1 operations (block-wise orchestration) -------------------------
+    //
+    // Pure host-side orchestration: each method loops the blocks and forwards to
+    // that block's own Vector member, summing the partial results for the
+    // reductions. There is no cross-block SIMD and no flattening copy, so the
+    // per-block SIMD/zero-pad guarantees are inherited unchanged. Binary
+    // operands must be *conformable* -- equal block_count() and equal per-block
+    // size() for every block -- else std::invalid_argument is thrown.
 
+    /**
+     * @brief Inner product `Sum_k block(k).dot(other.block(k))` summed across all blocks (dot).
+     * @param other Operand, conformable with @c *this (same block count and per-block sizes).
+     * @return The summed dot product across every block.
+     * @throws std::invalid_argument on a block-count or per-block size mismatch.
+     */
     [[nodiscard]] T dot(const BlockVector<T>& other) const
     {
         check_conformable(other);
@@ -114,6 +136,14 @@ public:
         return sum;
     }
 
+    /**
+     * @brief Euclidean (L2) norm over the whole block vector (nrm2).
+     * @return `sqrt(Sum_k block(k).dot(block(k)))` -- the norm of the concatenation of the blocks;
+     *         `0` for an empty block vector (zero blocks).
+     *
+     * Sums the per-block *sum of squares* and takes one final `sqrt`, rather than summing per-block
+     * norms, so the result matches the flat-vector norm exactly.
+     */
     [[nodiscard]] T euclidean_norm() const noexcept
     {
         T sum_squares{};
@@ -123,6 +153,8 @@ public:
         return std::sqrt(sum_squares);
     }
 
+    /// @brief Sum of magnitudes `Sum_k block(k).absolute_sum()` across all blocks (asum).
+    /// @return The summed absolute sum across every block; `0` for an empty block vector.
     [[nodiscard]] T absolute_sum() const noexcept
     {
         T sum{};
@@ -132,6 +164,13 @@ public:
         return sum;
     }
 
+    /**
+     * @brief Scaled accumulate `this <- this + a*x`, block-wise (axpy).
+     * @param a Scale factor applied to @p x.
+     * @param x Operand, conformable with @c *this (same block count and per-block sizes).
+     * @return `*this`, to allow chaining.
+     * @throws std::invalid_argument on a block-count or per-block size mismatch.
+     */
     BlockVector& add_scaled(T a, const BlockVector<T>& x)
     {
         check_conformable(x);
@@ -141,6 +180,8 @@ public:
         return *this;
     }
 
+    /// @brief In place scaling `this <- a*this`, block-wise (scal).
+    /// @param a Scale factor. @return `*this`, to allow chaining.
     BlockVector& scale(T a) noexcept
     {
         for (auto& b : blocks_) {
@@ -149,6 +190,15 @@ public:
         return *this;
     }
 
+    /**
+     * @brief In place value copy `this <- src`, block-wise (`block(k).copy(src.block(k))`).
+     * @param src Source, conformable with @c *this (same block count and per-block sizes).
+     * @return `*this`, to allow chaining.
+     * @throws std::invalid_argument on a block-count or per-block size mismatch.
+     *
+     * The destination keeps its own storage -- nothing is allocated or resized, so a mismatch is a
+     * caller error (thrown) rather than a trigger to grow.
+     */
     BlockVector& copy(const BlockVector<T>& src)
     {
         check_conformable(src);
@@ -158,6 +208,8 @@ public:
         return *this;
     }
 
+    /// @brief Set every element of every block to @p value (each block's pad stays zero).
+    /// @param value Value written to every logical element of every block.
     void fill(T value) noexcept
     {
         for (auto& b : blocks_) {
@@ -165,15 +217,26 @@ public:
         }
     }
 
-    // -- convenience operators (mirror Vector) --------------------------------
+    // -- convenience operators (built on the operations above, mirror Vector) -
 
+    /// @brief `this <- a*this`. @param a Scale factor. @return `*this`.
     BlockVector& operator*=(T a) noexcept { return scale(a); }
+    /// @brief `this <- (1/a)*this`. @param a Divisor. @return `*this`.
     BlockVector& operator/=(T a) noexcept { return scale(T(1) / a); }
+    /// @brief `this <- this + x`. @param x Conformable operand. @return `*this`.
+    /// @throws std::invalid_argument on a block-count or per-block size mismatch.
     BlockVector& operator+=(const BlockVector& x) { return add_scaled(T(1), x); }
+    /// @brief `this <- this - x`. @param x Conformable operand. @return `*this`.
+    /// @throws std::invalid_argument on a block-count or per-block size mismatch.
     BlockVector& operator-=(const BlockVector& x) { return add_scaled(T(-1), x); }
 
 private:
-    /// @brief Throw if @p other is not conformable (block count / per-block sizes) with this vector.
+    /**
+     * @brief Throw unless @p other is conformable with @c *this: equal block_count() and equal
+     *        per-block size() for every block. Reused by dot(), add_scaled(), and copy().
+     * @param other The operand to validate against @c *this.
+     * @throws std::invalid_argument on a block-count or per-block size mismatch.
+     */
     void check_conformable(const BlockVector<T>& other) const
     {
         if (other.blocks_.size() != blocks_.size()) {
