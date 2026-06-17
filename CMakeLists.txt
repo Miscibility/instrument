@@ -67,6 +67,18 @@ FetchContent_Declare(highway
 )
 FetchContent_MakeAvailable(highway)
 
+# Taskflow — task-parallel backing for instrument/csr_matrix.hpp's parallel
+# Execution policy. Only the parallel specialization uses it, but the header
+# unconditionally includes <taskflow/taskflow.hpp>, so every consumer links it.
+set(TF_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(TF_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(TF_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(taskflow
+    GIT_REPOSITORY https://github.com/taskflow/taskflow.git
+    GIT_TAG v4.0.0
+)
+FetchContent_MakeAvailable(taskflow)
+
 # CBLAS + LAPACK (OpenBLAS) — backs instrument/matrix.hpp's BLAS-2/3 and LAPACK
 # wrappers. The libraries are found here and linked onto the interface target so
 # every consumer of Instrument links to them. matrix.hpp includes <cblas.h> (and,
@@ -91,6 +103,14 @@ target_link_libraries(${PROJECT_NAME} INTERFACE hwy hwy_contrib)
 target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE
     $<BUILD_INTERFACE:${highway_SOURCE_DIR}>
 )
+
+# Propagate Taskflow to every consumer; csr_matrix.hpp includes its header.
+# Marked SYSTEM so the project's -Wall -Wextra -Wpedantic do not fire inside it.
+target_link_libraries(${PROJECT_NAME} INTERFACE Taskflow)
+get_target_property(TASKFLOW_INCLUDE_DIRS Taskflow INTERFACE_INCLUDE_DIRECTORIES)
+if(TASKFLOW_INCLUDE_DIRS)
+    target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE $<BUILD_INTERFACE:${TASKFLOW_INCLUDE_DIRS}>)
+endif()
 
 # Propagate CBLAS/LAPACK to every consumer; matrix.hpp includes their headers.
 # The headers' include dirs are marked SYSTEM so -Wall -Wextra -Wpedantic do not
