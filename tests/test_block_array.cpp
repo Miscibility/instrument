@@ -219,6 +219,116 @@ int main()
         };
     };
 
+    suite<"BlockArray transforms"> block_array_transforms_suite = [] {
+        // -- reductions: argmax / max_magnitude --------------------------------
+
+        test("max_magnitude is the largest |element| across blocks") = [] {
+            mi::BlockArray<double> v{mi::Array<double>{1, -4, 3}, mi::Array<double>{-2, 9}};
+            expect(close(v.max_magnitude(), 9.0));
+        };
+
+        test("max_magnitude of an empty block array is zero") = [] {
+            mi::BlockArray<double> v;
+            expect(close(v.max_magnitude(), 0.0));
+        };
+
+        test("index_of_max_magnitude reports the global (concatenated) index") = [] {
+            // Concatenation: [1, -4, 3, -2, 9] -> argmax |.| at global index 4.
+            mi::BlockArray<double> v{mi::Array<double>{1, -4, 3}, mi::Array<double>{-2, 9}};
+            expect(v.index_of_max_magnitude() == 4_u);
+        };
+
+        test("index_of_max_magnitude breaks ties at the smallest global index") = [] {
+            // |4| in block 0 at global 1; |-4| in block 1 at global 3. First wins.
+            mi::BlockArray<double> v{mi::Array<double>{1, 4}, mi::Array<double>{-4, 2}};
+            expect(v.index_of_max_magnitude() == 1_u);
+        };
+
+        test("index_of_max_magnitude of an empty block array == size()") = [] {
+            mi::BlockArray<double> v;
+            expect(v.index_of_max_magnitude() == v.size());
+            expect(v.index_of_max_magnitude() == 0_u);
+        };
+
+        // -- unary componentwise transforms ------------------------------------
+
+        test("abs applies block-wise and returns *this") = [] {
+            mi::BlockArray<double> v{mi::Array<double>{-1, 2}, mi::Array<double>{-3}};
+            auto& ref = v.abs();
+            expect(&ref == &v);
+            expect(close(v.block(0)[0], 1.0));
+            expect(close(v.block(0)[1], 2.0));
+            expect(close(v.block(1)[0], 3.0));
+        };
+
+        test("exp applies block-wise and the pads stay zero (sum stays finite/correct)") = [] {
+            mi::BlockArray<double> v{mi::Array<double>{0.0, 1.0}, mi::Array<double>{2.0}};
+            v.exp();
+            expect(close(v.block(0)[0], std::exp(0.0)));
+            expect(close(v.block(0)[1], std::exp(1.0)));
+            expect(close(v.block(1)[0], std::exp(2.0)));
+            // If a pad had been left at exp(0)=1, the sum would exceed the logical total.
+            expect(close(v.sum(), std::exp(0.0) + std::exp(1.0) + std::exp(2.0)));
+        };
+
+        test("chaining: abs().sqrt() composes block-wise") = [] {
+            mi::BlockArray<double> v{mi::Array<double>{-4, 9}, mi::Array<double>{-16}};
+            v.abs().sqrt();
+            expect(close(v.block(0)[0], 2.0));
+            expect(close(v.block(0)[1], 3.0));
+            expect(close(v.block(1)[0], 4.0));
+        };
+
+        test("apply with a custom functor (x + 1) runs block-wise") = [] {
+            mi::BlockArray<double> v{mi::Array<double>{1, 2}, mi::Array<double>{3}};
+            v.apply([](auto d, auto x) { return mi::detail::hn::Add(x, mi::detail::hn::Set(d, 1.0)); });
+            expect(close(v.block(0)[0], 2.0));
+            expect(close(v.block(0)[1], 3.0));
+            expect(close(v.block(1)[0], 4.0));
+        };
+
+        // -- binary elementwise ops --------------------------------------------
+
+        test("elementwise_product multiplies block-wise") = [] {
+            mi::BlockArray<double> a{mi::Array<double>{1, 2}, mi::Array<double>{3}};
+            mi::BlockArray<double> b{mi::Array<double>{4, 5}, mi::Array<double>{6}};
+            a.elementwise_product(b);
+            expect(close(a.block(0)[0], 4.0));
+            expect(close(a.block(0)[1], 10.0));
+            expect(close(a.block(1)[0], 18.0));
+        };
+
+        test("elementwise_quotient divides block-wise; pad NaN does not leak") = [] {
+            mi::BlockArray<double> a{mi::Array<double>{8, 9}, mi::Array<double>{6}};
+            mi::BlockArray<double> b{mi::Array<double>{2, 3}, mi::Array<double>{6}};
+            a.elementwise_quotient(b);
+            expect(close(a.block(0)[0], 4.0));
+            expect(close(a.block(0)[1], 3.0));
+            expect(close(a.block(1)[0], 1.0));
+            // The transient 0/0 = NaN in each block's pad must have been scrubbed.
+            expect(std::isfinite(a.absolute_sum())) << "no NaN leaked from a pad";
+        };
+
+        test("elementwise_product/quotient throw invalid_argument on a mismatch") = [] {
+            mi::BlockArray<double> a{mi::Array<double>{1, 2}, mi::Array<double>{3}};
+            mi::BlockArray<double> b{mi::Array<double>{1, 2, 3}, mi::Array<double>{4}};
+            expect(throws<std::invalid_argument>([&] { a.elementwise_product(b); }));
+            expect(throws<std::invalid_argument>([&] { a.elementwise_quotient(b); }));
+        };
+
+        // -- swap --------------------------------------------------------------
+
+        test("swap (ADL) exchanges contents") = [] {
+            mi::BlockArray<double> a{mi::Array<double>{1, 2}};
+            mi::BlockArray<double> b{mi::Array<double>{7, 8}, mi::Array<double>{9}};
+            swap(a, b);
+            expect(a.block_count() == 2_u);
+            expect(b.block_count() == 1_u);
+            expect(close(a.block(0)[0], 7.0));
+            expect(close(b.block(0)[1], 2.0));
+        };
+    };
+
     suite<"BlockArray float"> block_array_float_suite = [] {
         test("float instantiation: sum and absolute_sum") = [] {
             mi::BlockArray<float> a{mi::Array<float>{1, 2}, mi::Array<float>{3}};
