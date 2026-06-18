@@ -88,11 +88,25 @@ public:
     // -- operations (block-wise orchestration) --------------------------------
 
     /// @brief Plain sum `Sum_k block(k).sum()` across all blocks. @return The summed value; `0` for empty.
-    [[nodiscard]] T sum() const noexcept { throw std::runtime_error{"not implemented"}; }
+    [[nodiscard]] T sum() const noexcept
+    {
+        T total{};
+        for (const auto& b : blocks_) {
+            total += b.sum();
+        }
+        return total;
+    }
 
     /// @brief Sum of magnitudes `Sum_k block(k).absolute_sum()` across all blocks (asum).
     /// @return The summed absolute sum; `0` for an empty block array.
-    [[nodiscard]] T absolute_sum() const noexcept { throw std::runtime_error{"not implemented"}; }
+    [[nodiscard]] T absolute_sum() const noexcept
+    {
+        T total{};
+        for (const auto& b : blocks_) {
+            total += b.absolute_sum();
+        }
+        return total;
+    }
 
     /**
      * @brief Scaled accumulate `this <- this + a*x`, block-wise (axpy).
@@ -104,16 +118,20 @@ public:
     BlockArray& add_scaled(T a, const BlockArray<T>& x)
     {
         check_conformable(x);
-        (void)a;
-        throw std::runtime_error{"not implemented"};
+        for (size_type k = 0; k < blocks_.size(); ++k) {
+            blocks_[k].add_scaled(a, x.blocks_[k]);
+        }
+        return *this;
     }
 
     /// @brief In place scaling `this <- a*this`, block-wise (scal).
     /// @param a Scale factor. @return `*this`, to allow chaining.
     BlockArray& scale(T a) noexcept
     {
-        (void)a;
-        throw std::runtime_error{"not implemented"};
+        for (auto& b : blocks_) {
+            b.scale(a);
+        }
+        return *this;
     }
 
     /**
@@ -128,15 +146,19 @@ public:
     BlockArray& copy(const BlockArray<T>& src)
     {
         check_conformable(src);
-        throw std::runtime_error{"not implemented"};
+        for (size_type k = 0; k < blocks_.size(); ++k) {
+            blocks_[k].copy(src.blocks_[k]);
+        }
+        return *this;
     }
 
     /// @brief Set every element of every block to @p value (each block's pad stays zero).
     /// @param value Value written to every logical element of every block.
     void fill(T value) noexcept
     {
-        (void)value;
-        throw std::runtime_error{"not implemented"};
+        for (auto& b : blocks_) {
+            b.fill(value);
+        }
     }
 
     // -- convenience operators (built on the operations above, mirror Array) --
