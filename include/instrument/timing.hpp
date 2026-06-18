@@ -31,19 +31,36 @@
 
 namespace miscibility::instrument {
 
+/// The clock used for all timing measurements: a monotonic steady clock.
 using clock = std::chrono::steady_clock;
 
+/// A snapshot of the timing measured for one region.
+///
+/// "Total" time is inclusive (the region and everything called within it);
+/// "self" time is exclusive (total minus the time attributed to child regions).
+/// Returned by :cpp:`query` and used internally to build the report tables.
 struct Stats {
+    /// The region's name (its last path segment, not the full path).
     std::string name;
+    /// Number of times the region was entered.
     std::uint64_t calls = 0;
+    /// Inclusive wall time spent in the region, in seconds.
     double total_seconds = 0;
+    /// Exclusive wall time (total minus children), in seconds.
     double self_seconds = 0;
+    /// Mean inclusive time per top-level entry, in seconds.
     double avg_seconds = 0;
+    /// Inclusive time as a percentage of the whole measured program.
     double pct_total = 0;
+    /// Inclusive time as a percentage of the parent region.
     double pct_parent = 0;
 };
 
-enum class Format : std::uint8_t { Plain, Markdown };
+/// Output style for a timing report.
+enum class Format : std::uint8_t {
+    Plain,    ///< A box-drawn ASCII table for console output.
+    Markdown, ///< A GitHub-flavored Markdown table for files and docs.
+};
 
 namespace detail {
 
@@ -268,6 +285,11 @@ inline std::string indent_for(int depth, Format fmt)
 
 } // namespace detail
 
+/// Computes the derived :cpp:`Stats` (self time, averages, percentages) for one node.
+///
+/// :param n: The region node to summarize.
+/// :param denom_ns: Total measured nanoseconds used as the denominator for ``pct_total``.
+/// :param parent: The node's parent, or ``nullptr`` at the top level, used for ``pct_parent``.
 inline Stats to_stats(const detail::Node& n, std::uint64_t denom_ns, const detail::Node* parent)
 {
     Stats s;
@@ -287,6 +309,20 @@ inline Stats to_stats(const detail::Node& n, std::uint64_t denom_ns, const detai
     return s;
 }
 
+/// Looks up the aggregated stats for a single region by its path.
+///
+/// The path is a ``/``-separated sequence of region names from a root region
+/// down to the region of interest, for example ``"solve/assemble"``. Results
+/// are aggregated across all threads.
+///
+/// .. code-block:: cpp
+///
+///     if (auto s = query("solve/assemble")) {
+///         std::cout << s->calls << " calls, " << s->total_seconds << " s\n";
+///     }
+///
+/// :param path: Slash-separated region path to resolve.
+/// :returns: The region's stats, or ``std::nullopt`` if no such region was recorded.
 inline std::optional<Stats> query(std::string_view path)
 {
     auto root = detail::aggregate();
@@ -325,6 +361,28 @@ inline std::optional<Stats> query(std::string_view path)
     return to_stats(*cur, denom, parent);
 }
 
+/// A scoped guard that times the region between its construction and destruction.
+///
+/// Construct a ``Timer`` at the start of the scope you want to measure; it
+/// records the elapsed time when it goes out of scope. Nested timers form a
+/// call tree, so a region's time is attributed beneath its enclosing region.
+///
+/// ``Level`` gates the timer at compile time against
+/// ``MISCIBILITY_INSTRUMENT_TIMING_LEVEL``: when ``Level`` exceeds the configured
+/// level the timer compiles to nothing, so fine-grained instrumentation can be
+/// left in place and switched off without runtime cost. Lower levels are
+/// coarser; higher levels are reserved for hot, inner-loop regions.
+///
+/// .. code-block:: cpp
+///
+///     void solve() {
+///         Timer t{"solve"};
+///         // ... work timed as the "solve" region ...
+///     }
+///
+/// The timer is neither copyable nor movable; it is meant to live on the stack.
+///
+/// :tparam Level: Verbosity level at which this timer is active.
 template<int Level = 1> class Timer {
     static constexpr bool On = (Level <= MISCIBILITY_INSTRUMENT_TIMING_LEVEL);
 
@@ -336,6 +394,7 @@ template<int Level = 1> class Timer {
     [[no_unique_address]] std::conditional_t<On, State, Empty> s_;
 
 public:
+    /// Opens a timed region named ``name`` (a no-op when gated off by ``Level``).
     explicit Timer(std::string_view name)
     {
         if constexpr (On) {
@@ -357,11 +416,31 @@ public:
     Timer& operator=(Timer&&) = delete;
 };
 
+/// Creates a :cpp:`Timer` for the current scope.
+///
+/// A convenience factory so the region can be opened without naming the
+/// ``Level`` twice. Bind the result to a local variable so it lives for the
+/// scope you want to measure:
+///
+/// .. code-block:: cpp
+///
+///     auto t = scoped_timer("assemble");
+///
+/// :param name: Name of the region.
+/// :tparam Level: Verbosity level at which the timer is active.
 template<int Level = 1> [[nodiscard]] inline Timer<Level> scoped_timer(std::string_view name)
 {
     return Timer<Level>{name};
 }
 
+/// Opens a timed region that is closed by a later :cpp:`stop`.
+///
+/// Use this when the region does not align with a C++ scope. Calls must nest:
+/// the most recently started region is the one a bare :cpp:`stop` closes. When
+/// gated off by ``Level`` this does nothing.
+///
+/// :param name: Name of the region to open.
+/// :tparam Level: Verbosity level at which the region is recorded.
 template<int Level = 1> inline void start(std::string_view name)
 {
     if constexpr (Level <= MISCIBILITY_INSTRUMENT_TIMING_LEVEL) {
@@ -370,6 +449,15 @@ template<int Level = 1> inline void start(std::string_view name)
     }
 }
 
+/// Closes the most recently started region (see :cpp:`start`).
+///
+/// If ``expected`` is given, it is checked against the region actually being
+/// closed and a warning is written to ``std::cerr`` on a mismatch, which
+/// usually signals mis-nested ``start``/``stop`` pairs. Calling ``stop`` with
+/// no open region also warns rather than throwing.
+///
+/// :param expected: Optional name the closing region is expected to have.
+/// :tparam Level: Must match the ``Level`` used for the paired :cpp:`start`.
 template<int Level = 1> inline void stop(std::string_view expected = {})
 {
     if constexpr (Level <= MISCIBILITY_INSTRUMENT_TIMING_LEVEL) {
@@ -415,6 +503,13 @@ inline void emit_rows(const Node& node, std::uint64_t denom, int depth, std::vec
 
 } // namespace detail
 
+/// Writes the full timing report to ``os``.
+///
+/// The report is a table of every recorded region, sorted by total time and
+/// indented to show the call hierarchy, aggregated across all threads.
+///
+/// :param os: Stream to write to.
+/// :param fmt: Table style (plain ASCII or Markdown).
 inline void report(std::ostream& os, Format fmt = Format::Plain)
 {
     auto root = detail::aggregate();
@@ -438,14 +533,25 @@ inline void report(std::ostream& os, Format fmt = Format::Plain)
     }
 }
 
+/// Writes the timing report to a file, defaulting to Markdown.
+///
+/// :param path: Destination file; overwritten if it exists.
+/// :param fmt: Table style (Markdown by default).
 inline void report(const std::filesystem::path& path, Format fmt = Format::Markdown)
 {
     std::ofstream f(path);
     report(f, fmt);
 }
 
+/// Writes the timing report to standard output.
+///
+/// :param fmt: Table style (plain ASCII by default).
 inline void report(Format fmt = Format::Plain) { report(std::cout, fmt); }
 
+/// Clears all recorded timing data and restarts the wall-clock baseline.
+///
+/// Use this to time a fresh phase after discarding earlier measurements, for
+/// example to exclude a warm-up pass from the reported numbers.
 inline void reset()
 {
     auto& tr = detail::ThreadReg::local();
@@ -658,6 +764,20 @@ inline void print_mpi(std::ostream& os, const MpiReduce& red, int nranks, Format
 
 #ifdef MISCIBILITY_INSTRUMENT_WITH_MPI
 
+/// Gathers per-rank timings across an MPI communicator and reports them on one rank.
+///
+/// Every rank must call this collectively. Each rank's region tree is sent to
+/// ``root``, which combines them and prints a table showing, per region, the
+/// mean time per rank, the min and max across ranks, and a load-imbalance
+/// percentage ``(max/mean - 1) * 100``. Only ``root`` writes to ``os``.
+///
+/// Available only when the library is built with
+/// ``MISCIBILITY_INSTRUMENT_WITH_MPI`` defined.
+///
+/// :param comm: Communicator over which timings are gathered.
+/// :param root: Rank that aggregates and prints the report.
+/// :param os: Stream the root rank writes to.
+/// :param fmt: Table style (plain ASCII or Markdown).
 inline void report_mpi(MPI_Comm comm = MPI_COMM_WORLD, int root = 0, std::ostream& os = std::cout,
                        Format fmt = Format::Plain)
 {
