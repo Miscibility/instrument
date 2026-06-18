@@ -1,11 +1,11 @@
 /**
- * @file vector.hpp
- * @brief An aligned, padded numeric vector with a compile-time *or* runtime length.
+ * @file array.hpp
+ * @brief An aligned, padded numeric array with a compile-time *or* runtime length.
  *
  * @code{.cpp}
- * miscibility::instrument::Vector<double, 128>      // static length, no heap
- * miscibility::instrument::Vector<double>           // runtime length, aligned heap buffer
- * miscibility::instrument::Vector<float, dynamic>   // == Vector<float> (explicit sentinel)
+ * miscibility::instrument::Array<double, 128>      // static length, no heap
+ * miscibility::instrument::Array<double>           // runtime length, aligned heap buffer
+ * miscibility::instrument::Array<float, dynamic>   // == Array<float> (explicit sentinel)
  * @endcode
  *
  * @par Storage guarantees
@@ -21,25 +21,24 @@
  * @par The zero-pad invariant
  * Between operations the pad slots `[size(), capacity())` are held at zero. Construction and
  * fill() establish it; zero_pad() restores it after any operation that may write non-zero
- * values into the pad (e.g. a future componentwise `exp`, where `exp(0) == 1`).
+ * values into the pad (e.g. a componentwise `exp`, where `exp(0) == 1`).
  *
  * @par BLAS-1 operations
- * Vector exposes explicitly-vectorized BLAS-1 kernels under plain-language names (the classic
- * BLAS mnemonic is given in parentheses):
+ * Array exposes explicitly-vectorized BLAS-1 kernels under plain-language names (the classic
+ * BLAS mnemonic is given in parentheses where one exists):
  * - scale() / `*=` / `/=` (scal): `x <- a*x`.
  * - add_scaled() / `+=` / `-=` (axpy): `this <- this + a*x`.
- * - dot() (dot): inner product.
- * - euclidean_norm() (nrm2): `sqrt(Sum x_i^2)`.
+ * - sum(): `Sum x_i` (the signed counterpart of absolute_sum/asum; no exact BLAS mnemonic).
  * - absolute_sum() (asum): `Sum |x_i|`.
  * - index_of_max_magnitude() (iamax) and max_magnitude(): argmax `|x_i|` and its magnitude.
  *
- * `dot` and `add_scaled` accept an operand of any extent (static or dynamic); only logical
- * `size()` equality is required, and a mismatch throws `std::invalid_argument`. Each reduction
- * is a single counter-driven loop over `capacity()` that relies on the zero pad (`0` is neutral
- * for these sums and products), so there is no scalar remainder tail.
+ * `add_scaled` accepts an operand of any extent (static or dynamic); only logical `size()`
+ * equality is required, and a mismatch throws `std::invalid_argument`. Each reduction is a
+ * single counter-driven loop over `capacity()` that relies on the zero pad (`0` is neutral
+ * for these sums), so there is no scalar remainder tail.
  *
  * @par Componentwise transforms
- * Beyond BLAS-1, Vector applies lane-wise operations in place: abs() / sqrt(), every Highway
+ * Beyond BLAS-1, Array applies lane-wise operations in place: abs() / sqrt(), every Highway
  * transcendental (exp(), exp2(), expm1(), log(), log2(), log10(), log1p(), sin(), cos(), sinh(),
  * tanh(), asin(), acos(), asinh(), acosh(), atan(), atanh()), the elementwise (Hadamard) binary
  * ops elementwise_product() / elementwise_quotient(), and the generic apply() escape hatch for
@@ -51,12 +50,12 @@
  * @par Static vs dynamic storage
  * `dynamic` (the default extent) keeps the buffer on the heap and is the recommended choice
  * for anything but small, fixed lengths. A static extent stores the whole padded array inline,
- * so a large one risks stack exhaustion when the Vector is a local (e.g.
- * `Vector<double, 100'000>` is ~800 KB). Prefer dynamic for large vectors; reserve static for
+ * so a large one risks stack exhaustion when the Array is a local (e.g.
+ * `Array<double, 100'000>` is ~800 KB). Prefer dynamic for large arrays; reserve static for
  * small fixed sizes (coordinates, small block dimensions).
  *
  * @par Ownership
- * The heap buffer lives in a small storage helper that implements the Rule of 5, so Vector
+ * The heap buffer lives in a small storage helper that implements the Rule of 5, so Array
  * itself follows the Rule of Zero -- its defaulted special members are correct.
  *
  * @par SIMD dispatch
@@ -85,16 +84,16 @@
 #include <utility>
 
 /// @namespace miscibility::instrument
-/// @brief Instrument library for the Miscibility project; this header adds an aligned vector.
+/// @brief Instrument library for the Miscibility project; this header adds an aligned array.
 namespace miscibility::instrument {
 
 /**
- * @brief Element types permitted in a Vector: IEEE floating-point scalars.
+ * @brief Element types permitted in an Array: IEEE floating-point scalars.
  * @tparam T Candidate element type.
  *
  * Restricted to `std::floating_point` because Highway lanes are well-defined for IEEE
  * float/double, which also keeps the numeric reductions built on this container (e.g.
- * euclidean norm, absolute sum) meaningful -- they rely on `Abs` and `sqrt`.
+ * sum, absolute sum) meaningful -- they rely on `Abs` and friends.
  */
 template<class T>
 concept Scalar = std::floating_point<T>;
@@ -140,10 +139,10 @@ template<Scalar T> [[nodiscard]] constexpr std::size_t padded_count(std::size_t 
 //
 // Explicitly-vectorized numeric kernels operating over the padded capacity
 // `cap`. Each is a single counter-driven loop over `[0, cap)` with no scalar
-// remainder tail, relying on the zero-pad invariant: scale, add_scaled and dot
-// all leave the pad at zero (0*a = 0, 0 + a*0 = 0, 0*0 = 0), so the invariant is
-// self-maintaining for these operations. All are noexcept; the throwing size
-// check lives in the Vector methods, before the kernel call.
+// remainder tail, relying on the zero-pad invariant: scale and add_scaled leave
+// the pad at zero (0*a = 0, 0 + a*0 = 0), so the invariant is self-maintaining
+// for these operations. All are noexcept; the throwing size check lives in the
+// Array methods, before the kernel call.
 
 /**
  * @internal
@@ -196,6 +195,9 @@ template<Scalar T> void add_scaled(T* y, const T* x, std::size_t cap, T a) noexc
  * @param b   Second operand. Must hold @p cap elements.
  * @param cap Padded element count (a whole multiple of the lane count).
  * @return The dot product. Pad lanes contribute `0 * 0 == 0`, so they do not affect the sum.
+ *
+ * Retained as an internal kernel (small, may be reused) even though the public `dot`/
+ * `euclidean_norm` were removed when `Vector` became `Array`.
  */
 template<Scalar T> [[nodiscard]] T dot(const T* a, const T* b, std::size_t cap) noexcept
 {
@@ -210,20 +212,19 @@ template<Scalar T> [[nodiscard]] T dot(const T* a, const T* b, std::size_t cap) 
 
 /**
  * @internal
- * @brief Sum of squares `Sum p_i^2` over `[0, cap)`.
+ * @brief Plain sum `Sum p_i` over `[0, cap)`.
  * @tparam T Element type.
  * @param p   Operand. Must hold @p cap elements.
  * @param cap Padded element count (a whole multiple of the lane count).
- * @return The sum of squares (zero pad lanes contribute nothing); square-root it for the L2 norm.
+ * @return The sum (zero pad lanes contribute `0`).
  */
-template<Scalar T> [[nodiscard]] T sum_squares(const T* p, std::size_t cap) noexcept
+template<Scalar T> [[nodiscard]] T sum(const T* p, std::size_t cap) noexcept
 {
     const hn::ScalableTag<T> d;
     const std::size_t lanes = hn::Lanes(d);
     auto acc = hn::Zero(d);
     for (std::size_t i = 0; i < cap; i += lanes) {
-        const auto v = hn::Load(d, p + i);
-        acc = hn::MulAdd(v, v, acc);
+        acc = hn::Add(acc, hn::Load(d, p + i));
     }
     return hn::ReduceSum(d, acc);
 }
@@ -291,9 +292,9 @@ template<Scalar T> [[nodiscard]] std::size_t index_of_max_magnitude(const T* p, 
 // Lane-wise transform kernels operating over the padded capacity `cap`. Each is
 // a single counter-driven loop over `[0, cap)` with no scalar remainder tail.
 // Unlike the BLAS-1 kernels these are NOT self-maintaining for the zero-pad
-// invariant (e.g. exp(0) = 1, 0/0 = NaN), so the calling Vector method runs a
+// invariant (e.g. exp(0) = 1, 0/0 = NaN), so the calling Array method runs a
 // trailing zero_pad(). The kernels themselves are noexcept; the throwing
-// size-check for the binary kernel lives in the Vector method, before the call.
+// size-check for the binary kernel lives in the Array method, before the call.
 
 /**
  * @internal
@@ -340,7 +341,7 @@ template<Scalar T, class G> void zip(T* y, const T* x, std::size_t cap, G g) noe
 // ---- Storage helpers -------------------------------------------------------
 //
 // Two storage strategies, selected by extent. Each exposes the same surface
-// (data(), size(), capacity()) so Vector's layer is written once.
+// (data(), size(), capacity()) so Array's layer is written once.
 
 /**
  * @internal
@@ -449,7 +450,7 @@ private:
  *
  * Trivially copyable, so the defaulted special members are correct. The array is value-
  * initialized, so both the logical elements and the pad start at zero. Lives inline (on the
- * stack when the owning Vector is a local) -- keep @p N small.
+ * stack when the owning Array is a local) -- keep @p N small.
  */
 template<Scalar T, std::size_t N> class static_storage {
     static_assert(N > 0, "use miscibility::instrument::dynamic for length 0 / runtime length");
@@ -474,7 +475,7 @@ using storage_t = std::conditional_t<N == dynamic, dynamic_storage<T>, static_st
 // ----------------------------------------------------------------------------
 
 /**
- * @brief An aligned, padded numeric vector with a compile-time or runtime length.
+ * @brief An aligned, padded numeric array with a compile-time or runtime length.
  * @tparam T Element type (an IEEE floating-point @ref Scalar).
  * @tparam N Logical length, or @c dynamic (the default) for a runtime, heap-backed length.
  *
@@ -483,15 +484,15 @@ using storage_t = std::conditional_t<N == dynamic, dynamic_storage<T>, static_st
  * the invariant the library's numeric kernels rely on. See the file overview for details.
  *
  * Copy, move, and destruction follow the Rule of Zero: the storage member handles them, so a
- * dynamic Vector deep-copies and a static Vector copies its inline array.
+ * dynamic Array deep-copies and a static Array copies its inline array.
  *
  * @code{.cpp}
- * miscibility::instrument::Vector<double> v(1000);   // 1000 zeros, heap-backed
- * v.fill(2.0);                                        // logical elements = 2, pad stays 0
- * miscibility::instrument::Vector<double, 3> p{1, 2, 3};   // fixed length, inline
+ * miscibility::instrument::Array<double> v(1000);   // 1000 zeros, heap-backed
+ * v.fill(2.0);                                       // logical elements = 2, pad stays 0
+ * miscibility::instrument::Array<double, 3> p{1, 2, 3};   // fixed length, inline
  * @endcode
  */
-template<Scalar T, std::size_t N = dynamic> class Vector {
+template<Scalar T, std::size_t N = dynamic> class Array {
     using storage = detail::storage_t<T, N>;
 
 public:
@@ -505,25 +506,25 @@ public:
 
     // -- construction (Rule of Zero: storage handles copy/move/destroy) -------
 
-    /// @brief Default: an empty dynamic vector, or a zero-filled fixed-length static vector.
-    Vector() = default;
+    /// @brief Default: an empty dynamic array, or a zero-filled fixed-length static array.
+    Array() = default;
 
     /**
-     * @brief Construct a runtime-length, zero-filled vector. Dynamic extent only.
+     * @brief Construct a runtime-length, zero-filled array. Dynamic extent only.
      * @param n Logical length.
      */
-    explicit Vector(size_type n)
+    explicit Array(size_type n)
         requires is_dynamic
         : store_(n)
     {
     }
 
     /**
-     * @brief Construct a runtime-length vector with every logical element set to @p value.
+     * @brief Construct a runtime-length array with every logical element set to @p value.
      * @param n     Logical length.
      * @param value Value written to each logical element (pad stays zero). Dynamic extent only.
      */
-    Vector(size_type n, T value)
+    Array(size_type n, T value)
         requires is_dynamic
         : store_(n)
     {
@@ -531,10 +532,10 @@ public:
     }
 
     /**
-     * @brief Construct a runtime-length vector from a braced list. Dynamic extent only.
+     * @brief Construct a runtime-length array from a braced list. Dynamic extent only.
      * @param init Initial elements; the length becomes `init.size()`.
      */
-    Vector(std::initializer_list<T> init)
+    Array(std::initializer_list<T> init)
         requires is_dynamic
         : store_(init.size())
     {
@@ -542,15 +543,15 @@ public:
     }
 
     /**
-     * @brief Construct a fixed-length vector from a braced list. Static extent only.
+     * @brief Construct a fixed-length array from a braced list. Static extent only.
      * @param init Exactly @p N elements.
      * @throws std::invalid_argument if `init.size() != N`.
      */
-    Vector(std::initializer_list<T> init)
+    Array(std::initializer_list<T> init)
         requires(!is_dynamic)
     {
         if (init.size() != N) {
-            throw std::invalid_argument{"miscibility::instrument::Vector size mismatch"};
+            throw std::invalid_argument{"miscibility::instrument::Array size mismatch"};
         }
         std::copy(init.begin(), init.end(), data());
     }
@@ -571,7 +572,7 @@ public:
     [[nodiscard]] T& at(size_type i)
     {
         if (i >= size()) {
-            throw std::out_of_range{"miscibility::instrument::Vector::at"};
+            throw std::out_of_range{"miscibility::instrument::Array::at"};
         }
         return data()[i];
     }
@@ -584,7 +585,7 @@ public:
     [[nodiscard]] const T& at(size_type i) const
     {
         if (i >= size()) {
-            throw std::out_of_range{"miscibility::instrument::Vector::at"};
+            throw std::out_of_range{"miscibility::instrument::Array::at"};
         }
         return data()[i];
     }
@@ -630,16 +631,16 @@ public:
         zero_pad();
     }
 
-    /// @brief Exchange contents with @p other. @param other Vector to swap with.
-    void swap(Vector& other) noexcept { std::swap(store_, other.store_); }
+    /// @brief Exchange contents with @p other. @param other Array to swap with.
+    void swap(Array& other) noexcept { std::swap(store_, other.store_); }
     /// @brief ADL swap: exchange the contents of @p a and @p b.
-    friend void swap(Vector& a, Vector& b) noexcept { a.swap(b); }
+    friend void swap(Array& a, Array& b) noexcept { a.swap(b); }
 
     /**
-     * @brief Copy the values of @p src into this already-sized vector, in place and without
+     * @brief Copy the values of @p src into this already-sized array, in place and without
      *        allocating.
      * @tparam M Extent of @p src (any matching-size extent is accepted, static or dynamic).
-     * @param src Source of the same logical size as @c *this; its values overwrite this vector's.
+     * @param src Source of the same logical size as @c *this; its values overwrite this array's.
      * @return `*this`, to allow chaining.
      * @throws std::invalid_argument if `src.size() != size()`.
      *
@@ -647,12 +648,12 @@ public:
      * is a caller error (thrown) rather than a trigger to grow. The zero-pad invariant is preserved:
      * the copy spans the whole `capacity()` and @p src's pad is already zero. Self-copy is safe.
      * @code{.cpp}
-     * miscibility::instrument::Vector<double, 5> v1{1, 2, 3, 4, 5};
-     * miscibility::instrument::Vector<double> v2(5);
+     * miscibility::instrument::Array<double, 5> v1{1, 2, 3, 4, 5};
+     * miscibility::instrument::Array<double> v2(5);
      * v2.copy(v1); // v2 now holds v1's values; no allocation, extents may differ
      * @endcode
      */
-    template<std::size_t M> Vector& copy(const Vector<T, M>& src)
+    template<std::size_t M> Array& copy(const Array<T, M>& src)
     {
         check_same_size(src.size());
         std::copy_n(src.data(), capacity(), data());
@@ -668,7 +669,7 @@ public:
      *
      * The zero-pad invariant is preserved (`a * 0 == 0`).
      */
-    Vector& scale(T a) noexcept
+    Array& scale(T a) noexcept
     {
         detail::scale<T>(data(), capacity(), a);
         return *this;
@@ -682,28 +683,15 @@ public:
      * @return *this.
      * @throws std::invalid_argument if `x.size() != size()`.
      */
-    template<std::size_t M> Vector& add_scaled(T a, const Vector<T, M>& x)
+    template<std::size_t M> Array& add_scaled(T a, const Array<T, M>& x)
     {
         check_same_size(x.size());
         detail::add_scaled<T>(data(), x.data(), capacity(), a);
         return *this;
     }
 
-    /**
-     * @brief Dot product `Sum this_i * other_i` (dot).
-     * @tparam M Extent of @p other (any matching-size extent is accepted).
-     * @param other Operand of the same logical size as @c *this.
-     * @return The dot product.
-     * @throws std::invalid_argument if `other.size() != size()`.
-     */
-    template<std::size_t M> [[nodiscard]] T dot(const Vector<T, M>& other) const
-    {
-        check_same_size(other.size());
-        return detail::dot<T>(data(), other.data(), capacity());
-    }
-
-    /// @brief Euclidean (L2) norm `sqrt(Sum this_i^2)` (nrm2). @return The norm.
-    [[nodiscard]] T euclidean_norm() const noexcept { return std::sqrt(detail::sum_squares<T>(data(), capacity())); }
+    /// @brief Plain sum `Sum this_i` (the signed counterpart of asum). @return The sum; `T{}` for empty.
+    [[nodiscard]] T sum() const noexcept { return detail::sum<T>(data(), capacity()); }
 
     /// @brief Sum of magnitudes `Sum |this_i|` (asum). @return The absolute sum.
     [[nodiscard]] T absolute_sum() const noexcept { return detail::absolute_sum<T>(data(), capacity()); }
@@ -711,7 +699,7 @@ public:
     /**
      * @brief Index of the largest-magnitude element (iamax).
      * @return The index of the element with the greatest `|this_i|`; the smallest such index on
-     *         ties. Returns `size()` for an empty vector (no element exists).
+     *         ties. Returns `size()` for an empty array (no element exists).
      */
     [[nodiscard]] size_type index_of_max_magnitude() const noexcept
     {
@@ -723,9 +711,9 @@ public:
 
     /**
      * @brief Largest element magnitude, `|element at index_of_max_magnitude()|` (related to iamax).
-     * @return The maximum `|this_i|`; `T{}` (zero) for an empty vector.
+     * @return The maximum `|this_i|`; `T{}` (zero) for an empty array.
      *
-     * For an empty vector index_of_max_magnitude() returns `size()`; reading that neutral pad
+     * For an empty array index_of_max_magnitude() returns `size()`; reading that neutral pad
      * slot yields zero, so this stays `noexcept` rather than throwing as `at(size())` would.
      */
     [[nodiscard]] T max_magnitude() const noexcept { return std::abs(data()[index_of_max_magnitude()]); }
@@ -745,7 +733,7 @@ public:
      * @return `*this`, to allow chaining.
      *
      * The escape hatch behind every named transform below: pass any Highway lane operation and
-     * it runs over the whole vector, after which the zero-pad invariant is restored for you (so a
+     * it runs over the whole array, after which the zero-pad invariant is restored for you (so a
      * subsequent reduction stays correct even if @p f writes non-zero values into the pad). Use
      * it for lane ops without a dedicated method.
      * @code{.cpp}
@@ -753,7 +741,7 @@ public:
      * v.apply([](auto d, auto x) { return hn::Add(x, hn::Set(d, T(1))); }); // x_i <- x_i + 1
      * @endcode
      */
-    template<class F> Vector& apply(F f) noexcept
+    template<class F> Array& apply(F f) noexcept
     {
         detail::map<T>(data(), capacity(), f);
         zero_pad();
@@ -761,7 +749,7 @@ public:
     }
 
     /// @brief In place absolute value `this_i <- |this_i|`. @return `*this`, for chaining.
-    Vector& abs() noexcept
+    Array& abs() noexcept
     {
         return apply([](auto /*d*/, auto v) { return detail::hn::Abs(v); });
     }
@@ -771,25 +759,25 @@ public:
      * @return `*this`, for chaining.
      * @note Defined for `this_i >= 0`; a negative element yields NaN (no exception).
      */
-    Vector& sqrt() noexcept
+    Array& sqrt() noexcept
     {
         return apply([](auto /*d*/, auto v) { return detail::hn::Sqrt(v); });
     }
 
     /// @brief In place natural exponential `this_i <- exp(this_i)`. @return `*this`, for chaining.
-    Vector& exp() noexcept
+    Array& exp() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Exp(d, v); });
     }
 
     /// @brief In place base-2 exponential `this_i <- 2^this_i`. @return `*this`, for chaining.
-    Vector& exp2() noexcept
+    Array& exp2() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Exp2(d, v); });
     }
 
     /// @brief In place `this_i <- exp(this_i) - 1`, accurate near zero. @return `*this`, for chaining.
-    Vector& expm1() noexcept
+    Array& expm1() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Expm1(d, v); });
     }
@@ -799,7 +787,7 @@ public:
      * @return `*this`, for chaining.
      * @note Defined for `this_i > 0`; zero yields -infinity and a negative element yields NaN.
      */
-    Vector& log() noexcept
+    Array& log() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Log(d, v); });
     }
@@ -809,7 +797,7 @@ public:
      * @return `*this`, for chaining.
      * @note Defined for `this_i > 0` (see @ref log for the boundary behavior).
      */
-    Vector& log2() noexcept
+    Array& log2() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Log2(d, v); });
     }
@@ -819,7 +807,7 @@ public:
      * @return `*this`, for chaining.
      * @note Defined for `this_i > 0` (see @ref log for the boundary behavior).
      */
-    Vector& log10() noexcept
+    Array& log10() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Log10(d, v); });
     }
@@ -829,31 +817,31 @@ public:
      * @return `*this`, for chaining.
      * @note Defined for `this_i > -1`; -1 yields -infinity and anything below yields NaN.
      */
-    Vector& log1p() noexcept
+    Array& log1p() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Log1p(d, v); });
     }
 
     /// @brief In place sine (radians) `this_i <- sin(this_i)`. @return `*this`, for chaining.
-    Vector& sin() noexcept
+    Array& sin() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Sin(d, v); });
     }
 
     /// @brief In place cosine (radians) `this_i <- cos(this_i)`. @return `*this`, for chaining.
-    Vector& cos() noexcept
+    Array& cos() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Cos(d, v); });
     }
 
     /// @brief In place hyperbolic sine `this_i <- sinh(this_i)`. @return `*this`, for chaining.
-    Vector& sinh() noexcept
+    Array& sinh() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Sinh(d, v); });
     }
 
     /// @brief In place hyperbolic tangent `this_i <- tanh(this_i)`. @return `*this`, for chaining.
-    Vector& tanh() noexcept
+    Array& tanh() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Tanh(d, v); });
     }
@@ -863,7 +851,7 @@ public:
      * @return `*this`, for chaining.
      * @note Defined for `this_i` in `[-1, 1]`; outside that range yields NaN.
      */
-    Vector& asin() noexcept
+    Array& asin() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Asin(d, v); });
     }
@@ -873,13 +861,13 @@ public:
      * @return `*this`, for chaining.
      * @note Defined for `this_i` in `[-1, 1]`; outside that range yields NaN.
      */
-    Vector& acos() noexcept
+    Array& acos() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Acos(d, v); });
     }
 
     /// @brief In place inverse hyperbolic sine `this_i <- asinh(this_i)`. @return `*this`, for chaining.
-    Vector& asinh() noexcept
+    Array& asinh() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Asinh(d, v); });
     }
@@ -889,13 +877,13 @@ public:
      * @return `*this`, for chaining.
      * @note Defined for `this_i >= 1`; below 1 yields NaN.
      */
-    Vector& acosh() noexcept
+    Array& acosh() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Acosh(d, v); });
     }
 
     /// @brief In place arc tangent (radians) `this_i <- atan(this_i)`. @return `*this`, for chaining.
-    Vector& atan() noexcept
+    Array& atan() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Atan(d, v); });
     }
@@ -905,7 +893,7 @@ public:
      * @return `*this`, for chaining.
      * @note Defined for `this_i` in `(-1, 1)`; +/-1 yields +/-infinity and outside yields NaN.
      */
-    Vector& atanh() noexcept
+    Array& atanh() noexcept
     {
         return apply([](auto d, auto v) { return detail::hn::Atanh(d, v); });
     }
@@ -917,7 +905,7 @@ public:
      * @return *this.
      * @throws std::invalid_argument if `x.size() != size()`.
      */
-    template<std::size_t M> Vector& elementwise_product(const Vector<T, M>& x)
+    template<std::size_t M> Array& elementwise_product(const Array<T, M>& x)
     {
         check_same_size(x.size());
         detail::zip<T>(data(), x.data(), capacity(), [](auto /*d*/, auto y, auto v) { return detail::hn::Mul(y, v); });
@@ -935,7 +923,7 @@ public:
      * The pad lanes transiently compute `0/0 = NaN`; the trailing zero_pad() scrubs them before
      * any reduction sees them.
      */
-    template<std::size_t M> Vector& elementwise_quotient(const Vector<T, M>& x)
+    template<std::size_t M> Array& elementwise_quotient(const Array<T, M>& x)
     {
         check_same_size(x.size());
         detail::zip<T>(data(), x.data(), capacity(), [](auto /*d*/, auto y, auto v) { return detail::hn::Div(y, v); });
@@ -946,21 +934,21 @@ public:
     // -- convenience operators (built on the kernels above) -------------------
 
     /// @brief `x <- a*x`. @param a Scale factor. @return *this.
-    Vector& operator*=(T a) noexcept { return scale(a); }
+    Array& operator*=(T a) noexcept { return scale(a); }
     /// @brief `x <- (1/a)*x`. @param a Divisor. @return *this.
-    Vector& operator/=(T a) noexcept { return scale(T(1) / a); }
+    Array& operator/=(T a) noexcept { return scale(T(1) / a); }
 
     /// @brief `this <- this + x`. @tparam M Extent of @p x. @param x Operand. @return *this.
-    template<std::size_t M> Vector& operator+=(const Vector<T, M>& x) { return add_scaled(T(1), x); }
+    template<std::size_t M> Array& operator+=(const Array<T, M>& x) { return add_scaled(T(1), x); }
     /// @brief `this <- this - x`. @tparam M Extent of @p x. @param x Operand. @return *this.
-    template<std::size_t M> Vector& operator-=(const Vector<T, M>& x) { return add_scaled(T(-1), x); }
+    template<std::size_t M> Array& operator-=(const Array<T, M>& x) { return add_scaled(T(-1), x); }
 
 private:
-    /// @brief Throw if @p other differs from this vector's logical size.
+    /// @brief Throw if @p other differs from this array's logical size.
     void check_same_size(size_type other) const
     {
         if (other != size()) {
-            throw std::invalid_argument{"miscibility::instrument::Vector size mismatch"};
+            throw std::invalid_argument{"miscibility::instrument::Array size mismatch"};
         }
     }
 

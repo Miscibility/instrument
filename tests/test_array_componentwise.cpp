@@ -1,18 +1,16 @@
-// test_vector_componentwise.cpp -- unit tests for the Vector componentwise
+// test_array_componentwise.cpp -- unit tests for the Array componentwise
 // transforms: apply, abs, sqrt and every Highway transcendental (exp/exp2/
 // expm1, log/log2/log10/log1p, sin/cos, sinh/tanh, asin/acos/asinh/acosh,
-// atan/atanh) plus the binary Hadamard ops multiply and divide.
-// boost/ut. See specs/vector-componentwise.md.
+// atan/atanh) plus the binary Hadamard ops multiply and divide. boost/ut.
+// See specs/array.md.
 //
-// Every test is expected to FAIL until tdd-3-implement fills in the stubs:
-// detail::map and detail::zip currently throw std::runtime_error{"not
-// implemented"}. Both kernels are noexcept, so that throw becomes std::terminate
-// and the binary aborts the moment a transform is first exercised -- that is the
-// expected "not implemented" signal. The size-mismatch test is the one exception:
-// multiply/divide run the (already-implemented) check_same_size before reaching
-// the stub, so that test pins the throwing contract and passes now.
+// This is the renamed test_vector_componentwise.cpp (Vector -> Array); the
+// transform surface is unchanged by the rename, so these cases pass against the
+// implementation carried over into array.hpp. The one euclidean_norm() usage
+// (the pad-NaN guard) is replaced with absolute_sum(), which reduces over the
+// full capacity just the same.
 
-#include "instrument/vector.hpp"
+#include "instrument/array.hpp"
 
 #include <boost/ut.hpp>
 #include <cmath>
@@ -25,10 +23,9 @@ namespace mi = miscibility::instrument;
 
 namespace {
 
-// Relative-tolerance comparator, mirroring test_vector_reductions.cpp. The
-// transcendentals are accurate to a few ULP, so a 1e-9 relative tolerance for
-// double (1e-5 for float) leaves ample headroom while still catching a wrong
-// kernel.
+// Relative-tolerance comparator. The transcendentals are accurate to a few ULP,
+// so a 1e-9 relative tolerance for double (1e-5 for float) leaves ample headroom
+// while still catching a wrong kernel.
 template<class T> bool close(T a, T b, T tol = T(1e-9))
 {
     return std::abs(a - b) <= tol * (T(1) + std::abs(a) + std::abs(b));
@@ -52,13 +49,13 @@ template<class V> void check_aligned_and_padded(const V& v)
     }
 }
 
-// Apply a unary transform to a fresh dynamic double Vector built from `input`,
+// Apply a unary transform to a fresh dynamic double Array built from `input`,
 // then assert it matches the scalar reference elementwise and the pad is zero.
 template<class Transform, class Ref>
 void check_unary_double(const std::vector<double>& input, Transform transform, Ref ref, double tol = 1e-9)
 {
     using namespace boost::ut;
-    mi::Vector<double> v(input.size());
+    mi::Array<double> v(input.size());
     std::copy(input.begin(), input.end(), v.begin());
     transform(v); // in place
     for (std::size_t i = 0; i < input.size(); ++i) {
@@ -73,11 +70,11 @@ int main()
 {
     using namespace boost::ut;
 
-    suite<"VectorComponentwise"> componentwise_suite = [] {
+    suite<"ArrayComponentwise"> componentwise_suite = [] {
         // -- abs ---------------------------------------------------------------
 
         test("abs: x_i == |ref_x_i| for negative/positive/zero; pad zero") = [] {
-            mi::Vector<double, 17> v{};
+            mi::Array<double, 17> v{};
             for (int i = 0; i < 17; ++i) {
                 v[static_cast<std::size_t>(i)] = static_cast<double>(i - 8); // -8..8, incl. 0
             }
@@ -216,7 +213,7 @@ int main()
         // -- elementwise_product (Hadamard) -----------------------------------
 
         test("elementwise_product (Hadamard): x_i == ref_x_i * ref_y_i; pad zero") = [] {
-            mi::Vector<double, 17> x{}, y{};
+            mi::Array<double, 17> x{}, y{};
             for (int i = 0; i < 17; ++i) {
                 x[static_cast<std::size_t>(i)] = static_cast<double>(i - 8);
                 y[static_cast<std::size_t>(i)] = static_cast<double>((i * 3 % 7) - 3);
@@ -231,8 +228,8 @@ int main()
 
         // -- elementwise_quotient ---------------------------------------------
 
-        test("elementwise_quotient: x_i == ref_x_i / ref_y_i (non-zero divisors); pad zero; norm finite") = [] {
-            mi::Vector<double, 17> x{}, y{};
+        test("elementwise_quotient: x_i == ref_x_i / ref_y_i (non-zero divisors); pad zero; sum finite") = [] {
+            mi::Array<double, 17> x{}, y{};
             for (int i = 0; i < 17; ++i) {
                 x[static_cast<std::size_t>(i)] = static_cast<double>(i - 8);
                 y[static_cast<std::size_t>(i)] = static_cast<double>((i % 5) + 1); // 1..5, never 0
@@ -244,14 +241,14 @@ int main()
             }
             check_aligned_and_padded(x);
             // The pad transiently computed 0/0 = NaN; zero_pad() must have scrubbed it
-            // before euclidean_norm sums the squares, so the result stays finite.
-            expect(std::isfinite(x.euclidean_norm())) << "no NaN leaked from 0/0 in the pad";
+            // before absolute_sum reduces over the capacity, so the result stays finite.
+            expect(std::isfinite(x.absolute_sum())) << "no NaN leaked from 0/0 in the pad";
         };
 
         // -- integration: transform then reduce -------------------------------
 
         test("integration: x.exp() then absolute_sum() == sum of exp over logical range only") = [] {
-            mi::Vector<double, 17> x{};
+            mi::Array<double, 17> x{};
             for (int i = 0; i < 17; ++i) {
                 x[static_cast<std::size_t>(i)] = 0.1 * static_cast<double>(i - 8);
             }
@@ -268,8 +265,8 @@ int main()
 
         // -- chaining ----------------------------------------------------------
 
-        test("chaining: x.abs().sqrt() composes and leaves a valid (aligned, zero-pad) vector") = [] {
-            mi::Vector<double, 17> x{};
+        test("chaining: x.abs().sqrt() composes and leaves a valid (aligned, zero-pad) array") = [] {
+            mi::Array<double, 17> x{};
             for (int i = 0; i < 17; ++i) {
                 x[static_cast<std::size_t>(i)] = static_cast<double>(i - 8); // negatives included
             }
@@ -281,24 +278,24 @@ int main()
             check_aligned_and_padded(x);
         };
 
-        // -- size mismatch (the one test that passes against the stubs) --------
+        // -- size mismatch -----------------------------------------------------
 
         test("elementwise_product/quotient throw invalid_argument on size mismatch (static vs dynamic)") = [] {
-            mi::Vector<double, 5> a{1, 2, 3, 4, 5};
-            mi::Vector<double> b(4);
+            mi::Array<double, 5> a{1, 2, 3, 4, 5};
+            mi::Array<double> b(4);
             expect(throws<std::invalid_argument>([&] { a.elementwise_product(b); }));
             expect(throws<std::invalid_argument>([&] { a.elementwise_quotient(b); }));
 
-            mi::Vector<double> c(5);
-            mi::Vector<double> d(6);
+            mi::Array<double> c(5);
+            mi::Array<double> d(6);
             expect(throws<std::invalid_argument>([&] { c.elementwise_product(d); }));
             expect(throws<std::invalid_argument>([&] { c.elementwise_quotient(d); }));
         };
 
         // -- both element types and storage strategies -------------------------
 
-        test("works for Vector<float, 17> (static, non-dividing extent)") = [] {
-            mi::Vector<float, 17> x{};
+        test("works for Array<float, 17> (static, non-dividing extent)") = [] {
+            mi::Array<float, 17> x{};
             for (int i = 0; i < 17; ++i) {
                 x[static_cast<std::size_t>(i)] = 0.1F * static_cast<float>(i + 1); // positive
             }
@@ -310,8 +307,8 @@ int main()
             check_aligned_and_padded(x);
         };
 
-        test("works for Vector<double>(1000) (dynamic extent)") = [] {
-            mi::Vector<double> x(1000);
+        test("works for Array<double>(1000) (dynamic extent)") = [] {
+            mi::Array<double> x(1000);
             for (std::size_t i = 0; i < 1000; ++i) {
                 x[i] = (0.01 * static_cast<double>(i)) - 5.0;
             }

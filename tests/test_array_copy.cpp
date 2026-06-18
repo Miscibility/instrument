@@ -1,12 +1,12 @@
-// test_vector_copy.cpp -- unit tests for Vector::copy (in-place, no-allocation
+// test_array_copy.cpp -- unit tests for Array::copy (in-place, no-allocation
 // value copy) and the same-size dynamic copy-assign no-allocation optimization
-// (boost/ut). See specs/vector-copy.md.
+// (boost/ut). See specs/array.md.
 //
-// Every test is expected to FAIL until tdd-3-implement fills in the stub:
-// Vector::copy currently throws std::runtime_error, and the no-allocation
-// guarantees do not yet hold (copy-and-swap still reallocates).
+// This is the renamed test_vector_copy.cpp (Vector -> Array); the copy surface is
+// unchanged by the rename, so these cases pass against the implementation carried
+// over into array.hpp.
 
-#include "instrument/vector.hpp"
+#include "instrument/array.hpp"
 
 #include <boost/ut.hpp>
 #include <stdexcept>
@@ -31,10 +31,10 @@ int main()
 {
     using namespace boost::ut;
 
-    suite<"VectorCopy"> copy_suite = [] {
+    suite<"ArrayCopy"> copy_suite = [] {
         test("static <- static, same type: values copied, pad zero") = [] {
-            mi::Vector<double, 5> v1{1, 2, 3, 4, 5};
-            mi::Vector<double, 5> v2;
+            mi::Array<double, 5> v1{1, 2, 3, 4, 5};
+            mi::Array<double, 5> v2;
             v2.copy(v1);
             for (std::size_t i = 0; i < 5; ++i) {
                 expect(v2[i] == v1[i]);
@@ -43,8 +43,8 @@ int main()
         };
 
         test("cross-extent dynamic <- static: values copied, size unchanged, pad zero") = [] {
-            mi::Vector<double, 5> v1{1, 2, 3, 4, 5};
-            mi::Vector<double> v3(5);
+            mi::Array<double, 5> v1{1, 2, 3, 4, 5};
+            mi::Array<double> v3(5);
             v3.copy(v1);
             expect(v3.size() == 5_u);
             for (std::size_t i = 0; i < 5; ++i) {
@@ -54,8 +54,8 @@ int main()
         };
 
         test("cross-extent static <- dynamic: values copied, pad zero") = [] {
-            mi::Vector<double> d(5, 7.0);
-            mi::Vector<double, 5> s;
+            mi::Array<double> d(5, 7.0);
+            mi::Array<double, 5> s;
             s.copy(d);
             for (std::size_t i = 0; i < 5; ++i) {
                 expect(s[i] == 7.0_d);
@@ -64,11 +64,11 @@ int main()
         };
 
         test("dynamic <- dynamic, same size: values copied, pad zero") = [] {
-            mi::Vector<double> src(5);
+            mi::Array<double> src(5);
             for (std::size_t i = 0; i < 5; ++i) {
                 src[i] = static_cast<double>(i) - 2.0;
             }
-            mi::Vector<double> dst(5);
+            mi::Array<double> dst(5);
             dst.copy(src);
             for (std::size_t i = 0; i < 5; ++i) {
                 expect(dst[i] == src[i]);
@@ -77,8 +77,8 @@ int main()
         };
 
         test("returns *this for chaining") = [] {
-            mi::Vector<double, 5> v1{1, 2, 3, 4, 5};
-            mi::Vector<double, 5> v2;
+            mi::Array<double, 5> v1{1, 2, 3, 4, 5};
+            mi::Array<double, 5> v2;
             v2.copy(v1).scale(2.0);
             for (std::size_t i = 0; i < 5; ++i) {
                 expect(v2[i] == 2.0 * v1[i]);
@@ -86,15 +86,15 @@ int main()
         };
 
         test("copy makes an independent value copy, not an alias") = [] {
-            mi::Vector<double, 5> v1{1, 2, 3, 4, 5};
-            mi::Vector<double, 5> v2;
+            mi::Array<double, 5> v1{1, 2, 3, 4, 5};
+            mi::Array<double, 5> v2;
             v2.copy(v1);
             v1[0] = 99.0;
             expect(v2[0] == 1.0_d) << "mutating source must not change destination";
         };
 
         test("self-copy leaves contents and size unchanged") = [] {
-            mi::Vector<double> v(5);
+            mi::Array<double> v(5);
             for (std::size_t i = 0; i < 5; ++i) {
                 v[i] = static_cast<double>(i) + 1.0;
             }
@@ -107,8 +107,8 @@ int main()
         };
 
         test("pad is restored to zero with no explicit zero_pad by the caller") = [] {
-            mi::Vector<double, 5> src{1, 2, 3, 4, 5};
-            mi::Vector<double, 5> dst;
+            mi::Array<double, 5> src{1, 2, 3, 4, 5};
+            mi::Array<double, 5> dst;
             // Dirty the destination's pad through the full padded view.
             auto full = dst.padded_span();
             for (std::size_t i = dst.size(); i < dst.capacity(); ++i) {
@@ -122,8 +122,8 @@ int main()
         };
 
         test("size mismatch throws invalid_argument and leaves destination untouched") = [] {
-            mi::Vector<double> src(5, 3.0);
-            mi::Vector<double> dst(4, 1.0);
+            mi::Array<double> src(5, 3.0);
+            mi::Array<double> dst(4, 1.0);
             expect(throws<std::invalid_argument>([&] { dst.copy(src); }));
             // destination untouched
             expect(dst.size() == 4_u);
@@ -133,19 +133,18 @@ int main()
         };
 
         test("no allocation: copy reuses the destination buffer (dynamic <- dynamic)") = [] {
-            mi::Vector<double> src(5, 4.0);
-            mi::Vector<double> dst(5);
+            mi::Array<double> src(5, 4.0);
+            mi::Array<double> dst(5);
             const double* before = dst.data();
             dst.copy(src);
             expect(dst.data() == before) << "copy must not reallocate";
         };
 
         // The optimized same-size copy-assign must reuse the buffer (new behavior) AND remain a
-        // correct, independent value copy that is self-assignment-safe (regression guard). Both
-        // checks live in one test so it fails now on the no-allocation assertion.
+        // correct, independent value copy that is self-assignment-safe (regression guard).
         test("no allocation: same-size dynamic copy-assign reuses the buffer and stays correct") = [] {
-            mi::Vector<double> a(5, 1.0);
-            mi::Vector<double> b(5, 2.0);
+            mi::Array<double> a(5, 1.0);
+            mi::Array<double> b(5, 2.0);
             const double* before = a.data();
             a = b;
             expect(a.data() == before) << "same-size copy-assign must not reallocate";
