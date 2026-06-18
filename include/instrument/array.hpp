@@ -218,9 +218,15 @@ template<Scalar T> [[nodiscard]] T dot(const T* a, const T* b, std::size_t cap) 
  * @param cap Padded element count (a whole multiple of the lane count).
  * @return The sum (zero pad lanes contribute `0`).
  */
-template<Scalar T> [[nodiscard]] T sum(const T* /*p*/, std::size_t /*cap*/) noexcept
+template<Scalar T> [[nodiscard]] T sum(const T* p, std::size_t cap) noexcept
 {
-    throw std::runtime_error{"not implemented"};
+    const hn::ScalableTag<T> d;
+    const std::size_t lanes = hn::Lanes(d);
+    auto acc = hn::Zero(d);
+    for (std::size_t i = 0; i < cap; i += lanes) {
+        acc = hn::Add(acc, hn::Load(d, p + i));
+    }
+    return hn::ReduceSum(d, acc);
 }
 
 /**
