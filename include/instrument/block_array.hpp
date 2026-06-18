@@ -1,31 +1,3 @@
-/**
- * @file block_array.hpp
- * @brief A sequence of owned @ref miscibility::instrument::Array blocks
- *        (@ref miscibility::instrument::BlockArray) mirroring Array's BLAS-1-style surface
- *        block-wise.
- *
- * @code{.cpp}
- * using namespace miscibility::instrument;
- *
- * BlockArray<double> x{Array<double>{1, 2}, Array<double>{3, 4}};
- * x.scale(2.0);          // block-wise
- * double s = x.sum();    // summed across blocks
- * @endcode
- *
- * @par What it is
- * A BlockArray owns a sequence of @ref Array blocks and forwards the operations Array exposes
- * (after the Vector->Array rename: `dot`/`euclidean_norm` removed, `sum` added) to each block,
- * so the same solver code runs unchanged over a flat @ref Array or a blocked operand. Each
- * operation is pure host-side orchestration: it loops the blocks and forwards to that block's
- * own @ref Array member (summing the partials for the reductions). There is no cross-block SIMD
- * and no flattening copy, so the per-block SIMD/zero-pad guarantees are inherited unchanged.
- * Binary operands must be *conformable* -- equal block_count() and equal per-block size() -- or
- * `std::invalid_argument` is thrown.
- *
- * @par Header-only
- * C++23. Depends only on @ref array.hpp.
- */
-
 #pragma once
 
 #include "instrument/array.hpp"
@@ -39,52 +11,54 @@
 
 namespace miscibility::instrument {
 
-/**
- * @brief A sequence of owned @ref Array blocks mirroring Array's numeric surface block-wise.
- * @tparam T Element type (an IEEE floating-point @ref Scalar).
- *
- * Blocks may have *different* lengths. The full @ref Array numeric surface is forwarded to the
- * per-block members:
- * - reductions: sum(), absolute_sum(), index_of_max_magnitude(), max_magnitude();
- * - BLAS-1: scale(), add_scaled(), copy(), fill(), and the `*=` / `/=` / `+=` / `-=` operators;
- * - componentwise transforms: apply(), abs(), sqrt(), every Highway transcendental, and the
- *   binary elementwise_product() / elementwise_quotient().
- *
- * Each is pure host-side orchestration -- a loop over the blocks forwarding to that block's own
- * @ref Array member (summing the partials for the reductions). There is no cross-block SIMD and
- * no flattening copy, so the per-block SIMD/zero-pad guarantees are inherited unchanged; in
- * particular the componentwise transforms re-establish each block's zero pad themselves. Binary
- * operands must be *conformable* -- equal block_count() and equal per-block size().
- *
- * index_of_max_magnitude() reports an index into the logical *concatenation* of the blocks (a
- * global offset), to mirror @ref Array's flat contract.
- */
+/// A sequence of :cpp:`Array` blocks treated as one logical vector.
+///
+/// A block array stores several independent arrays and exposes the same
+/// arithmetic vocabulary as a single :cpp:`Array` — reductions, scaling, AXPY,
+/// element-wise math — applied across all blocks at once. Each operation works
+/// block by block, so the blocks need not be the same length; two block arrays
+/// are *conformable* when they have the same block count and matching lengths
+/// block for block.
+///
+/// This suits problems whose state is naturally partitioned (for example
+/// per-field or per-region unknowns) but should still be manipulated as a
+/// single vector by a solver.
+///
+/// .. code-block:: cpp
+///
+///     BlockArray<double> u{Array<double>{1.0, 2.0}, Array<double>{3.0, 4.0, 5.0}};
+///     u.scale(0.5).add_scaled(1.0, v);   // u = 0.5*u + v, across every block
+///     double total = u.sum();
+///
+/// :tparam T: Floating-point element type of the underlying arrays.
 template<Scalar T> class BlockArray {
 public:
-    using value_type = T;          ///< Element type.
-    using size_type = std::size_t; ///< Index / dimension type.
+    using value_type = T;
+    using size_type = std::size_t;
 
-    /// @brief Construct an empty block array (zero blocks).
+    /// Constructs a block array with no blocks.
     BlockArray() = default;
 
-    /// @brief Adopt a sequence of blocks. @param blocks The block arrays (moved in).
+    /// Constructs a block array that takes ownership of ``blocks``.
     explicit BlockArray(std::vector<Array<T>> blocks) : blocks_(std::move(blocks)) {}
 
-    /// @brief Construct from a braced list of blocks. @param blocks The block arrays.
+    /// Constructs a block array from a brace-enclosed list of arrays.
     BlockArray(std::initializer_list<Array<T>> blocks) : blocks_(blocks.begin(), blocks.end()) {}
 
-    /// @brief Number of blocks. @return The block count.
+    /// Number of blocks.
     [[nodiscard]] size_type block_count() const noexcept { return blocks_.size(); }
 
-    /// @brief Access block @p i (checked). @param i Block index. @return The block array.
-    /// @throws std::out_of_range if @p i is out of range.
+    /// Bounds-checked access to the ``i``-th block.
+    ///
+    /// :throws std::out_of_range: if ``i`` is not less than :cpp:`block_count`.
     [[nodiscard]] Array<T>& block(size_type i) { return blocks_.at(i); }
 
-    /// @brief Access block @p i (checked, const). @param i Block index. @return The block array.
-    /// @throws std::out_of_range if @p i is out of range.
+    /// Bounds-checked access to the ``i``-th block.
+    ///
+    /// :throws std::out_of_range: if ``i`` is not less than :cpp:`block_count`.
     [[nodiscard]] const Array<T>& block(size_type i) const { return blocks_.at(i); }
 
-    /// @brief Total length summed across every block. @return The total element count.
+    /// Total number of elements summed over every block.
     [[nodiscard]] size_type size() const
     {
         size_type total = 0;
@@ -94,15 +68,15 @@ public:
         return total;
     }
 
-    /// @brief Append a block. @param v The block array to append (moved in).
+    /// Appends ``v`` as a new trailing block.
     void push_block(Array<T> v) { blocks_.push_back(std::move(v)); }
 
-    /// @brief Exchange contents with @p other. @param other Block array to swap with.
+    /// Swaps contents with ``other``.
     void swap(BlockArray& other) noexcept { blocks_.swap(other.blocks_); }
-    /// @brief ADL swap: exchange the contents of @p a and @p b.
+    /// Swaps the contents of two block arrays.
     friend void swap(BlockArray& a, BlockArray& b) noexcept { a.swap(b); }
 
-    /// @brief Restore each block's zero-pad invariant (forwards to every block's zero_pad()).
+    /// Re-zeros the SIMD padding of every block (see :cpp:`Array::zero_pad`).
     void zero_pad() noexcept
     {
         for (auto& b : blocks_) {
@@ -110,9 +84,7 @@ public:
         }
     }
 
-    // -- operations (block-wise orchestration) --------------------------------
-
-    /// @brief Plain sum `Sum_k block(k).sum()` across all blocks. @return The summed value; `0` for empty.
+    /// Sum of all elements across every block.
     [[nodiscard]] T sum() const noexcept
     {
         T total{};
@@ -122,8 +94,7 @@ public:
         return total;
     }
 
-    /// @brief Sum of magnitudes `Sum_k block(k).absolute_sum()` across all blocks (asum).
-    /// @return The summed absolute sum; `0` for an empty block array.
+    /// Sum of the absolute values of all elements (the L1 norm).
     [[nodiscard]] T absolute_sum() const noexcept
     {
         T total{};
@@ -133,23 +104,24 @@ public:
         return total;
     }
 
-    /**
-     * @brief Index of the largest-magnitude element across all blocks (iamax).
-     * @return The index into the logical concatenation of the blocks (a global offset) of the
-     *         element with the greatest `|element|`; the smallest such index on ties. Returns
-     *         `size()` for an empty block array (no element exists).
-     */
+    /// Flattened index of the largest-magnitude element across all blocks.
+    ///
+    /// Indices are counted as if the blocks were concatenated in order. On ties
+    /// the earliest such element wins. An empty block array reports :cpp:`size`.
+    ///
+    /// :returns: The concatenated-vector index of the largest-magnitude element,
+    ///     or :cpp:`size` if there are no elements.
     [[nodiscard]] size_type index_of_max_magnitude() const noexcept
     {
         const size_type total = size();
-        size_type best = total; // "no element" sentinel (== total; never a valid index)
+        size_type best = total;
         T best_mag{};
         size_type offset = 0;
         for (const auto& b : blocks_) {
             if (!b.empty()) {
                 const size_type local = b.index_of_max_magnitude();
                 const T mag = std::abs(b[local]);
-                if (best == total || mag > best_mag) { // strict '>': smallest global index wins ties
+                if (best == total || mag > best_mag) {
                     best = offset + local;
                     best_mag = mag;
                 }
@@ -159,8 +131,7 @@ public:
         return best;
     }
 
-    /// @brief Largest element magnitude across all blocks (related to iamax).
-    /// @return The maximum `|element|` over every block; `T{}` (zero) for an empty block array.
+    /// Largest absolute element value over all blocks (the infinity norm).
     [[nodiscard]] T max_magnitude() const noexcept
     {
         T best{};
@@ -173,13 +144,11 @@ public:
         return best;
     }
 
-    /**
-     * @brief Scaled accumulate `this <- this + a*x`, block-wise (axpy).
-     * @param a Scale factor applied to @p x.
-     * @param x Operand, conformable with @c *this (same block count and per-block sizes).
-     * @return `*this`, to allow chaining.
-     * @throws std::invalid_argument on a block-count or per-block size mismatch.
-     */
+    /// Adds a scaled block array in place (``y := y + a*x``), block by block.
+    ///
+    /// :param a: Scalar multiplier applied to ``x``.
+    /// :param x: Block array to add; must be conformable with this one.
+    /// :throws std::invalid_argument: if ``x`` differs in block count or in any block's length.
     BlockArray& add_scaled(T a, const BlockArray<T>& x)
     {
         check_conformable(x);
@@ -189,8 +158,7 @@ public:
         return *this;
     }
 
-    /// @brief In place scaling `this <- a*this`, block-wise (scal).
-    /// @param a Scale factor. @return `*this`, to allow chaining.
+    /// Multiplies every element by ``a`` in place.
     BlockArray& scale(T a) noexcept
     {
         for (auto& b : blocks_) {
@@ -199,15 +167,10 @@ public:
         return *this;
     }
 
-    /**
-     * @brief In place value copy `this <- src`, block-wise (`block(k).copy(src.block(k))`).
-     * @param src Source, conformable with @c *this (same block count and per-block sizes).
-     * @return `*this`, to allow chaining.
-     * @throws std::invalid_argument on a block-count or per-block size mismatch.
-     *
-     * The destination keeps its own storage -- nothing is allocated or resized, so a mismatch is a
-     * caller error (thrown) rather than a trigger to grow.
-     */
+    /// Copies the contents of ``src`` block by block.
+    ///
+    /// :param src: Source block array; must be conformable with this one.
+    /// :throws std::invalid_argument: if ``src`` differs in block count or in any block's length.
     BlockArray& copy(const BlockArray<T>& src)
     {
         check_conformable(src);
@@ -217,8 +180,7 @@ public:
         return *this;
     }
 
-    /// @brief Set every element of every block to @p value (each block's pad stays zero).
-    /// @param value Value written to every logical element of every block.
+    /// Sets every element of every block to ``value``.
     void fill(T value) noexcept
     {
         for (auto& b : blocks_) {
@@ -226,14 +188,9 @@ public:
         }
     }
 
-    // -- componentwise transforms (block-wise; each block restores its own pad) -
-
-    /**
-     * @brief Generic in place unary lane-wise transform applied to every block.
-     * @tparam F Highway functor with signature `Vec f(ScalableTag<T> d, Vec v)`.
-     * @param f Lane-wise transform forwarded to each block's @ref Array::apply.
-     * @return `*this`, to allow chaining.
-     */
+    /// Applies a SIMD lambda to every element of every block (see :cpp:`Array::apply`).
+    ///
+    /// :param f: Callable ``(descriptor, vector) -> vector`` applied across each block.
     template<class F> BlockArray& apply(F f) noexcept
     {
         for (auto& b : blocks_) {
@@ -242,51 +199,106 @@ public:
         return *this;
     }
 
-    /// @brief In place absolute value `b_i <- |b_i|`, block-wise. @return `*this`, for chaining.
-    BlockArray& abs() noexcept { return for_each_block([](auto& b) { b.abs(); }); }
-    /// @brief In place square root, block-wise. @return `*this`, for chaining.
-    BlockArray& sqrt() noexcept { return for_each_block([](auto& b) { b.sqrt(); }); }
-    /// @brief In place natural exponential, block-wise. @return `*this`, for chaining.
-    BlockArray& exp() noexcept { return for_each_block([](auto& b) { b.exp(); }); }
-    /// @brief In place base-2 exponential, block-wise. @return `*this`, for chaining.
-    BlockArray& exp2() noexcept { return for_each_block([](auto& b) { b.exp2(); }); }
-    /// @brief In place `exp(x) - 1`, block-wise. @return `*this`, for chaining.
-    BlockArray& expm1() noexcept { return for_each_block([](auto& b) { b.expm1(); }); }
-    /// @brief In place natural logarithm, block-wise. @return `*this`, for chaining.
-    BlockArray& log() noexcept { return for_each_block([](auto& b) { b.log(); }); }
-    /// @brief In place base-2 logarithm, block-wise. @return `*this`, for chaining.
-    BlockArray& log2() noexcept { return for_each_block([](auto& b) { b.log2(); }); }
-    /// @brief In place base-10 logarithm, block-wise. @return `*this`, for chaining.
-    BlockArray& log10() noexcept { return for_each_block([](auto& b) { b.log10(); }); }
-    /// @brief In place `log(1 + x)`, block-wise. @return `*this`, for chaining.
-    BlockArray& log1p() noexcept { return for_each_block([](auto& b) { b.log1p(); }); }
-    /// @brief In place sine (radians), block-wise. @return `*this`, for chaining.
-    BlockArray& sin() noexcept { return for_each_block([](auto& b) { b.sin(); }); }
-    /// @brief In place cosine (radians), block-wise. @return `*this`, for chaining.
-    BlockArray& cos() noexcept { return for_each_block([](auto& b) { b.cos(); }); }
-    /// @brief In place hyperbolic sine, block-wise. @return `*this`, for chaining.
-    BlockArray& sinh() noexcept { return for_each_block([](auto& b) { b.sinh(); }); }
-    /// @brief In place hyperbolic tangent, block-wise. @return `*this`, for chaining.
-    BlockArray& tanh() noexcept { return for_each_block([](auto& b) { b.tanh(); }); }
-    /// @brief In place arc sine (radians), block-wise. @return `*this`, for chaining.
-    BlockArray& asin() noexcept { return for_each_block([](auto& b) { b.asin(); }); }
-    /// @brief In place arc cosine (radians), block-wise. @return `*this`, for chaining.
-    BlockArray& acos() noexcept { return for_each_block([](auto& b) { b.acos(); }); }
-    /// @brief In place inverse hyperbolic sine, block-wise. @return `*this`, for chaining.
-    BlockArray& asinh() noexcept { return for_each_block([](auto& b) { b.asinh(); }); }
-    /// @brief In place inverse hyperbolic cosine, block-wise. @return `*this`, for chaining.
-    BlockArray& acosh() noexcept { return for_each_block([](auto& b) { b.acosh(); }); }
-    /// @brief In place arc tangent (radians), block-wise. @return `*this`, for chaining.
-    BlockArray& atan() noexcept { return for_each_block([](auto& b) { b.atan(); }); }
-    /// @brief In place inverse hyperbolic tangent, block-wise. @return `*this`, for chaining.
-    BlockArray& atanh() noexcept { return for_each_block([](auto& b) { b.atanh(); }); }
+    /// Replaces each element with its absolute value.
+    BlockArray& abs() noexcept
+    {
+        return for_each_block([](auto& b) { b.abs(); });
+    }
+    /// Replaces each element with its square root.
+    BlockArray& sqrt() noexcept
+    {
+        return for_each_block([](auto& b) { b.sqrt(); });
+    }
+    /// Replaces each element ``x`` with ``e**x``.
+    BlockArray& exp() noexcept
+    {
+        return for_each_block([](auto& b) { b.exp(); });
+    }
+    /// Replaces each element ``x`` with ``2**x``.
+    BlockArray& exp2() noexcept
+    {
+        return for_each_block([](auto& b) { b.exp2(); });
+    }
+    /// Replaces each element ``x`` with ``e**x - 1``, accurate for small ``x``.
+    BlockArray& expm1() noexcept
+    {
+        return for_each_block([](auto& b) { b.expm1(); });
+    }
+    /// Replaces each element with its natural logarithm.
+    BlockArray& log() noexcept
+    {
+        return for_each_block([](auto& b) { b.log(); });
+    }
+    /// Replaces each element with its base-2 logarithm.
+    BlockArray& log2() noexcept
+    {
+        return for_each_block([](auto& b) { b.log2(); });
+    }
+    /// Replaces each element with its base-10 logarithm.
+    BlockArray& log10() noexcept
+    {
+        return for_each_block([](auto& b) { b.log10(); });
+    }
+    /// Replaces each element ``x`` with ``log(1 + x)``, accurate for small ``x``.
+    BlockArray& log1p() noexcept
+    {
+        return for_each_block([](auto& b) { b.log1p(); });
+    }
+    /// Replaces each element with its sine (argument in radians).
+    BlockArray& sin() noexcept
+    {
+        return for_each_block([](auto& b) { b.sin(); });
+    }
+    /// Replaces each element with its cosine (argument in radians).
+    BlockArray& cos() noexcept
+    {
+        return for_each_block([](auto& b) { b.cos(); });
+    }
+    /// Replaces each element with its hyperbolic sine.
+    BlockArray& sinh() noexcept
+    {
+        return for_each_block([](auto& b) { b.sinh(); });
+    }
+    /// Replaces each element with its hyperbolic tangent.
+    BlockArray& tanh() noexcept
+    {
+        return for_each_block([](auto& b) { b.tanh(); });
+    }
+    /// Replaces each element with its arc sine (result in radians).
+    BlockArray& asin() noexcept
+    {
+        return for_each_block([](auto& b) { b.asin(); });
+    }
+    /// Replaces each element with its arc cosine (result in radians).
+    BlockArray& acos() noexcept
+    {
+        return for_each_block([](auto& b) { b.acos(); });
+    }
+    /// Replaces each element with its inverse hyperbolic sine.
+    BlockArray& asinh() noexcept
+    {
+        return for_each_block([](auto& b) { b.asinh(); });
+    }
+    /// Replaces each element with its inverse hyperbolic cosine.
+    BlockArray& acosh() noexcept
+    {
+        return for_each_block([](auto& b) { b.acosh(); });
+    }
+    /// Replaces each element with its arc tangent (result in radians).
+    BlockArray& atan() noexcept
+    {
+        return for_each_block([](auto& b) { b.atan(); });
+    }
+    /// Replaces each element with its inverse hyperbolic tangent.
+    BlockArray& atanh() noexcept
+    {
+        return for_each_block([](auto& b) { b.atanh(); });
+    }
 
-    /**
-     * @brief In place Hadamard (elementwise) product `this <- this * x`, block-wise.
-     * @param x Operand, conformable with @c *this (same block count and per-block sizes).
-     * @return `*this`, to allow chaining.
-     * @throws std::invalid_argument on a block-count or per-block size mismatch.
-     */
+    /// Multiplies element-by-element by ``x`` (the Hadamard product), block by block.
+    ///
+    /// :param x: Block array of factors; must be conformable with this one.
+    /// :throws std::invalid_argument: if ``x`` differs in block count or in any block's length.
     BlockArray& elementwise_product(const BlockArray<T>& x)
     {
         check_conformable(x);
@@ -296,12 +308,10 @@ public:
         return *this;
     }
 
-    /**
-     * @brief In place elementwise division `this <- this / x`, block-wise.
-     * @param x Operand, conformable with @c *this (same block count and per-block sizes).
-     * @return `*this`, to allow chaining.
-     * @throws std::invalid_argument on a block-count or per-block size mismatch.
-     */
+    /// Divides element-by-element by ``x``, block by block.
+    ///
+    /// :param x: Block array of divisors; must be conformable with this one.
+    /// :throws std::invalid_argument: if ``x`` differs in block count or in any block's length.
     BlockArray& elementwise_quotient(const BlockArray<T>& x)
     {
         check_conformable(x);
@@ -311,21 +321,16 @@ public:
         return *this;
     }
 
-    // -- convenience operators (built on the operations above, mirror Array) --
-
-    /// @brief `this <- a*this`. @param a Scale factor. @return `*this`.
+    /// Scales the block array by ``a`` (see :cpp:`scale`).
     BlockArray& operator*=(T a) noexcept { return scale(a); }
-    /// @brief `this <- (1/a)*this`. @param a Divisor. @return `*this`.
+    /// Divides the block array by ``a``.
     BlockArray& operator/=(T a) noexcept { return scale(T(1) / a); }
-    /// @brief `this <- this + x`. @param x Conformable operand. @return `*this`.
-    /// @throws std::invalid_argument on a block-count or per-block size mismatch.
+    /// Adds ``x`` element-wise (see :cpp:`add_scaled`).
     BlockArray& operator+=(const BlockArray& x) { return add_scaled(T(1), x); }
-    /// @brief `this <- this - x`. @param x Conformable operand. @return `*this`.
-    /// @throws std::invalid_argument on a block-count or per-block size mismatch.
+    /// Subtracts ``x`` element-wise.
     BlockArray& operator-=(const BlockArray& x) { return add_scaled(T(-1), x); }
 
 private:
-    /// @brief Apply @p op to every block in order and return `*this` (the unary-transform helper).
     template<class Op> BlockArray& for_each_block(Op op) noexcept
     {
         for (auto& b : blocks_) {
@@ -334,12 +339,6 @@ private:
         return *this;
     }
 
-    /**
-     * @brief Throw unless @p other is conformable with @c *this: equal block_count() and equal
-     *        per-block size() for every block. Reused by add_scaled() and copy().
-     * @param other The operand to validate against @c *this.
-     * @throws std::invalid_argument on a block-count or per-block size mismatch.
-     */
     void check_conformable(const BlockArray<T>& other) const
     {
         if (other.blocks_.size() != blocks_.size()) {
@@ -352,7 +351,7 @@ private:
         }
     }
 
-    std::vector<Array<T>> blocks_; ///< The owned blocks.
+    std::vector<Array<T>> blocks_;
 };
 
 } // namespace miscibility::instrument
