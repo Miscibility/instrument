@@ -16,6 +16,13 @@ jobs:
     env:
       CC: ${{ matrix.compiler == 'gcc' && 'gcc' || 'clang' }}
       CXX: ${{ matrix.compiler == 'gcc' && 'g++' || 'clang++' }}
+      # Ginkgo 2.0.0 is unreleased (latest official tag is v1.11.0), so we pin the exact
+      # develop-branch commit the project was built against for a reproducible CI build.
+      # WHEN 2.0.0 IS OFFICIALLY RELEASED: replace the SHA below with
+      #     GINKGO_REF: v2.0.0
+      # and switch the clone step to the simpler shallow-by-tag form (see the comment there).
+      GINKGO_REF: bec4d1ad9315c222b8037500e427cda8b51fcb5e  # develop @ Ginkgo 2.0.0
+      GINKGO_BUILD_REV: "1"       # bump to force a rebuild without changing GINKGO_REF
 
     steps:
       - name: Checkout repository
@@ -62,6 +69,49 @@ jobs:
         run: |
           brew install openblas lapack
           echo "CMAKE_PREFIX_PATH=/home/linuxbrew/.linuxbrew/opt/openblas:/home/linuxbrew/.linuxbrew/opt/lapack" >> $GITHUB_ENV
+
+      # -----------------------
+      # Restore (or build) Ginkgo — cached by version + OS + compiler
+      # -----------------------
+      - name: Cache Ginkgo install
+        id: cache-ginkgo
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ginkgo-install
+          key: ginkgo-${{ runner.os }}-${{ matrix.compiler }}-${{ env.GINKGO_REF }}-${{ env.GINKGO_BUILD_REV }}
+
+      - name: Build and install Ginkgo (cache miss only)
+        if: steps.cache-ginkgo.outputs.cache-hit != 'true'
+        run: |
+          # GINKGO_REF is a commit SHA (2.0.0 is unreleased), so fetch that exact
+          # commit shallowly. GitHub allows fetching a SHA directly.
+          # WHEN 2.0.0 IS OFFICIALLY RELEASED and GINKGO_REF becomes a tag (v2.0.0),
+          # you can replace these four lines with the simpler:
+          #   git clone --depth 1 --branch "$GINKGO_REF" \
+          #     https://github.com/ginkgo-project/ginkgo.git ginkgo-src
+          mkdir ginkgo-src && cd ginkgo-src
+          git init -q
+          git remote add origin https://github.com/ginkgo-project/ginkgo.git
+          git fetch --depth 1 origin "$GINKGO_REF"
+          git checkout -q FETCH_HEAD
+          cd ..
+          cmake -S ginkgo-src -B ginkgo-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/.ginkgo-install" \
+            -DGINKGO_BUILD_TESTS=OFF \
+            -DGINKGO_BUILD_EXAMPLES=OFF \
+            -DGINKGO_BUILD_BENCHMARKS=OFF \
+            -DGINKGO_BUILD_MPI=OFF \
+            -DGINKGO_BUILD_REFERENCE=ON \
+            -DGINKGO_BUILD_OMP=ON \
+            -DGINKGO_BUILD_CUDA=OFF \
+            -DGINKGO_BUILD_HIP=OFF \
+            -DGINKGO_BUILD_SYCL=OFF
+          cmake --build ginkgo-build --parallel
+          cmake --install ginkgo-build
+
+      - name: Point CMake at the cached Ginkgo
+        run: echo "Ginkgo_ROOT=$GITHUB_WORKSPACE/.ginkgo-install" >> "$GITHUB_ENV"
 
       # -----------------------
       # Configure using preset

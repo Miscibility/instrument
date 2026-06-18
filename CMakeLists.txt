@@ -67,6 +67,19 @@ FetchContent_Declare(highway
 )
 FetchContent_MakeAvailable(highway)
 
+# Ginkgo — the linear-algebra backend 
+find_package(Ginkgo QUIET)
+if(NOT Ginkgo_FOUND)
+    message(FATAL_ERROR
+        "Ginkgo was not found.\n"
+        "Install or build Ginkgo (https://github.com/ginkgo-project/ginkgo) and "
+        "tell CMake where it is, e.g.:\n"
+        "  cmake --preset debug -DGinkgo_ROOT=/path/to/ginkgo/install\n"
+        "The directory you pass must contain GinkgoConfig.cmake (an install "
+        "prefix, or Ginkgo's build tree)."
+    )
+endif()
+
 # Header-only interface library
 add_library(${PROJECT_NAME} INTERFACE)
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
@@ -82,6 +95,10 @@ target_link_libraries(${PROJECT_NAME} INTERFACE hwy hwy_contrib)
 target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE
     $<BUILD_INTERFACE:${highway_SOURCE_DIR}>
 )
+
+# Ginkgo — the imported target carries its own usage requirements (include dirs,
+# device sub-libraries, MPI). Linking it propagates Ginkgo to every consumer.
+target_link_libraries(${PROJECT_NAME} INTERFACE Ginkgo::ginkgo)
 
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_23)
 

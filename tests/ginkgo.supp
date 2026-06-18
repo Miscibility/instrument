@@ -1,0 +1,5 @@
+# Ginkgo builds a process-lifetime machine_topology singleton on first executor
+# creation, loading an hwloc topology that is intentionally never freed.
+# LeakSanitizer reports it as a leak; suppress it so the smoke test stays green.
+leak:gko::machine_topology
+leak:hwloc
