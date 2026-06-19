@@ -106,7 +106,7 @@ int main()
         test("apply on an unregistered operator does not crash and records nothing") = [] {
             mi::reset();
             mi::Context ctx;
-            auto exec = ctx.executor();
+            const auto& exec = ctx.executor();
             auto matrix = make_diagonal(exec, 2.0);
             auto b = gko::initialize<gko::matrix::Dense<double>>({1.0, 1.0}, exec);
             auto x = gko::matrix::Dense<double>::create(exec, gko::dim<2>{2, 1});
