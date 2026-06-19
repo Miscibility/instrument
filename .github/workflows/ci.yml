@@ -107,7 +107,7 @@ jobs:
             -DGINKGO_BUILD_CUDA=OFF \
             -DGINKGO_BUILD_HIP=OFF \
             -DGINKGO_BUILD_SYCL=OFF
-          cmake --build ginkgo-build --parallel
+          cmake --build ginkgo-build --parallel $(nproc)
           cmake --install ginkgo-build
 
       - name: Point CMake at the cached Ginkgo
@@ -125,7 +125,7 @@ jobs:
       # -----------------------
       - name: Build (${{ matrix.preset }}, ${{ matrix.compiler }})
         run: |
-          cmake --build --preset=${{ matrix.preset }}
+          cmake --build --preset=${{ matrix.preset }} --parallel $(nproc)
 
       # -----------------------
       # Test
