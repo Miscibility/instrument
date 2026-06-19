@@ -67,21 +67,6 @@ FetchContent_Declare(highway
 )
 FetchContent_MakeAvailable(highway)
 
-# Ginkgo — the linear-algebra backend (replaces the in-house matrix/CSR types).
-# The install location is NOT hardcoded here: pass -DGinkgo_ROOT=/path/to/ginkgo
-# (or -DCMAKE_PREFIX_PATH=...) on the cmake command line. Point it at an install
-# prefix or at Ginkgo's build tree (whichever contains GinkgoConfig.cmake).
-find_package(Ginkgo QUIET)
-if(NOT Ginkgo_FOUND)
-    message(FATAL_ERROR
-        "Ginkgo was not found.\n"
-        "Install or build Ginkgo (https://github.com/ginkgo-project/ginkgo) and "
-        "tell CMake where it is, e.g.:\n"
-        "  cmake --preset debug -DGinkgo_ROOT=/path/to/ginkgo/install\n"
-        "The directory you pass must contain GinkgoConfig.cmake (an install "
-        "prefix, or Ginkgo's build tree)."
-    )
-endif()
 
 # LAPACKE — C interface to LAPACK, used by the dense Factorization wrappers.
 # Provides the system BLAS/LAPACK via find_package(LAPACK) and then locates the
@@ -100,6 +85,21 @@ if(NOT LAPACK_FOUND OR NOT LAPACKE_INCLUDE_DIR OR NOT LAPACKE_LIBRARY)
     )
 endif()
 
+# Ginkgo — the linear-algebra backend 
+find_package(Ginkgo QUIET)
+if(NOT Ginkgo_FOUND)
+    message(FATAL_ERROR
+        "Ginkgo was not found.\n"
+        "Install or build Ginkgo (https://github.com/ginkgo-project/ginkgo) and "
+        "tell CMake where it is, e.g.:\n"
+        "  cmake --preset debug -DGinkgo_ROOT=/path/to/ginkgo/install\n"
+        "The directory you pass must contain GinkgoConfig.cmake (an install "
+        "prefix, or Ginkgo's build tree)."
+    )
+endif()
+
+find_package(OpenMP REQUIRED)
+
 # Header-only interface library
 add_library(${PROJECT_NAME} INTERFACE)
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
@@ -117,6 +117,13 @@ target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE
     $<BUILD_INTERFACE:${highway_SOURCE_DIR}>
     ${LAPACKE_INCLUDE_DIR}
 )
+
+# Ginkgo — the imported target carries its own usage requirements (include dirs,
+# device sub-libraries, MPI). Linking it propagates Ginkgo to every consumer.
+target_link_libraries(${PROJECT_NAME} INTERFACE Ginkgo::ginkgo)
+
+# OpenMP
+target_link_libraries(${PROJECT_NAME} INTERFACE OpenMP::OpenMP_CXX)
 
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_23)
 

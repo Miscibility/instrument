@@ -29,3 +29,12 @@ foreach(test_source IN LISTS TEST_SOURCES)
         ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan_suppressions.txt:print_suppressions=0"
     )
 endforeach()
+
+# The Ginkgo smoke test triggers Ginkgo's hwloc machine_topology singleton, whose
+# process-lifetime allocations LeakSanitizer reports as leaks. Point LSan at a
+# suppression file for just this test so the sanitizer build stays green.
+if(TEST test_ginkgo_smoke)
+    set_tests_properties(test_ginkgo_smoke PROPERTIES
+        ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/ginkgo.supp"
+    )
+endif()
