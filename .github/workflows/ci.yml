@@ -14,8 +14,8 @@ jobs:
         compiler: [gcc, clang]
 
     env:
-      CC: ${{ matrix.compiler == 'gcc' && 'gcc' || 'clang' }}
-      CXX: ${{ matrix.compiler == 'gcc' && 'g++' || 'clang++' }}
+      CC: ${{ matrix.compiler == 'gcc' && 'gcc' || 'clang-22' }}
+      CXX: ${{ matrix.compiler == 'gcc' && 'g++' || 'clang++-22' }}
       # Ginkgo 2.0.0 is unreleased (latest official tag is v1.11.0), so we pin the exact
       # develop-branch commit the project was built against for a reproducible CI build.
       # WHEN 2.0.0 IS OFFICIALLY RELEASED: replace the SHA below with
@@ -40,39 +40,23 @@ jobs:
       # -----------------------
       # Install Clang (brew)
       # -----------------------
-      - name: Install Homebrew
+      - name: Install Clang
         if: matrix.compiler == 'clang'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl file git
-          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
-          echo "/home/linuxbrew/.linuxbrew/sbin" >> $GITHUB_PATH
-
-      - name: Install Clang via brew
-        if: matrix.compiler == 'clang'
-        run: |
-          brew install llvm
-          echo "/home/linuxbrew/.linuxbrew/opt/llvm/bin" >> $GITHUB_PATH
-          # Make LLVM's OpenMP runtime visible at build- and run-time for clang-built artifacts
-          echo "LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/opt/llvm/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-          echo "LIBRARY_PATH=/home/linuxbrew/.linuxbrew/opt/llvm/lib:$LIBRARY_PATH" >> $GITHUB_ENV
-          echo "CMAKE_PREFIX_PATH=/home/linuxbrew/.linuxbrew/opt/llvm:$CMAKE_PREFIX_PATH" >> $GITHUB_ENV
+          sudo apt-get install -y build-essential lsb-release wget software-properties-common gnupg
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 22
+          sudo apt-get install -y clang-22 libomp-22-dev
 
       # -----------------------
       # Install OpenBLAS/LAPACK (CBLAS + LAPACKE) for instrument/matrix.hpp
       # -----------------------
       - name: Install OpenBLAS/LAPACK (apt)
-        if: matrix.compiler == 'gcc'
         run: |
           sudo apt-get update
           sudo apt-get install -y libopenblas-dev liblapacke-dev
-
-      - name: Install OpenBLAS/LAPACK (brew)
-        if: matrix.compiler == 'clang'
-        run: |
-          brew install openblas lapack
-          echo "CMAKE_PREFIX_PATH=/home/linuxbrew/.linuxbrew/opt/openblas:/home/linuxbrew/.linuxbrew/opt/lapack" >> $GITHUB_ENV
 
       # -----------------------
       # Restore (or build) Ginkgo — cached by version + OS + compiler
