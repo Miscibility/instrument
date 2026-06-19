@@ -67,6 +67,39 @@ FetchContent_Declare(highway
 )
 FetchContent_MakeAvailable(highway)
 
+# Ginkgo — the linear-algebra backend (replaces the in-house matrix/CSR types).
+# The install location is NOT hardcoded here: pass -DGinkgo_ROOT=/path/to/ginkgo
+# (or -DCMAKE_PREFIX_PATH=...) on the cmake command line. Point it at an install
+# prefix or at Ginkgo's build tree (whichever contains GinkgoConfig.cmake).
+find_package(Ginkgo QUIET)
+if(NOT Ginkgo_FOUND)
+    message(FATAL_ERROR
+        "Ginkgo was not found.\n"
+        "Install or build Ginkgo (https://github.com/ginkgo-project/ginkgo) and "
+        "tell CMake where it is, e.g.:\n"
+        "  cmake --preset debug -DGinkgo_ROOT=/path/to/ginkgo/install\n"
+        "The directory you pass must contain GinkgoConfig.cmake (an install "
+        "prefix, or Ginkgo's build tree)."
+    )
+endif()
+
+# LAPACKE — C interface to LAPACK, used by the dense Factorization wrappers.
+# Provides the system BLAS/LAPACK via find_package(LAPACK) and then locates the
+# LAPACKE header + library. Point CMake at a non-default install with
+# -DCMAKE_PREFIX_PATH=... ; do not hardcode a path here.
+find_package(LAPACK QUIET)
+find_path(LAPACKE_INCLUDE_DIR lapacke.h)
+find_library(LAPACKE_LIBRARY NAMES lapacke)
+if(NOT LAPACK_FOUND OR NOT LAPACKE_INCLUDE_DIR OR NOT LAPACKE_LIBRARY)
+    message(FATAL_ERROR
+        "LAPACKE was not found.\n"
+        "Install LAPACKE (e.g. 'liblapacke-dev' on Debian/Ubuntu) or point CMake "
+        "at it with -DCMAKE_PREFIX_PATH=/path/to/lapacke.\n"
+        "Need: lapacke.h (LAPACKE_INCLUDE_DIR) and the lapacke library "
+        "(LAPACKE_LIBRARY), plus a LAPACK implementation (find_package(LAPACK))."
+    )
+endif()
+
 # Header-only interface library
 add_library(${PROJECT_NAME} INTERFACE)
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
@@ -78,9 +111,11 @@ target_include_directories(${PROJECT_NAME} INTERFACE
 
 # Propagate Highway to every consumer; array.hpp includes its headers. Marked
 # SYSTEM so the project's -Wall -Wextra -Wpedantic do not fire inside Highway.
-target_link_libraries(${PROJECT_NAME} INTERFACE hwy hwy_contrib)
+target_link_libraries(${PROJECT_NAME} INTERFACE hwy hwy_contrib Ginkgo::ginkgo
+    ${LAPACKE_LIBRARY} ${LAPACK_LIBRARIES})
 target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE
     $<BUILD_INTERFACE:${highway_SOURCE_DIR}>
+    ${LAPACKE_INCLUDE_DIR}
 )
 
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_23)
