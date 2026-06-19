@@ -80,6 +80,8 @@ if(NOT Ginkgo_FOUND)
     )
 endif()
 
+find_package(OpenMP REQUIRED)
+
 # Header-only interface library
 add_library(${PROJECT_NAME} INTERFACE)
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
@@ -99,6 +101,9 @@ target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE
 # Ginkgo — the imported target carries its own usage requirements (include dirs,
 # device sub-libraries, MPI). Linking it propagates Ginkgo to every consumer.
 target_link_libraries(${PROJECT_NAME} INTERFACE Ginkgo::ginkgo)
+
+# OpenMP
+target_link_libraries(${PROJECT_NAME} INTERFACE OpenMP::OpenMP_CXX)
 
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_23)
 
