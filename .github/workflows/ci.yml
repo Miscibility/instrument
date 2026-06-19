@@ -35,7 +35,7 @@ jobs:
         if: matrix.compiler == 'gcc'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential gcc g++
+          sudo apt-get install -y build-essential gcc g++ libomp-dev
 
       # -----------------------
       # Install Clang (brew)
@@ -54,6 +54,10 @@ jobs:
         run: |
           brew install llvm
           echo "/home/linuxbrew/.linuxbrew/opt/llvm/bin" >> $GITHUB_PATH
+          # Make LLVM's OpenMP runtime visible at build- and run-time for clang-built artifacts
+          echo "LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/opt/llvm/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=/home/linuxbrew/.linuxbrew/opt/llvm/lib:$LIBRARY_PATH" >> $GITHUB_ENV
+          echo "CMAKE_PREFIX_PATH=/home/linuxbrew/.linuxbrew/opt/llvm:$CMAKE_PREFIX_PATH" >> $GITHUB_ENV
 
       # -----------------------
       # Install OpenBLAS/LAPACK (CBLAS + LAPACKE) for instrument/matrix.hpp
@@ -95,6 +99,13 @@ jobs:
           git fetch --depth 1 origin "$GINKGO_REF"
           git checkout -q FETCH_HEAD
           cd ..
+          # When building with clang via Homebrew, ensure installed Ginkgo encodes
+          # an RPATH for the Homebrew LLVM lib directory so test binaries can find libomp
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+          RPATH_FLAG="-DCMAKE_INSTALL_RPATH=/home/linuxbrew/.linuxbrew/opt/llvm/lib"
+          else
+          RPATH_FLAG=""
+          fi
           cmake -S ginkgo-src -B ginkgo-build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/.ginkgo-install" \
@@ -106,7 +117,8 @@ jobs:
             -DGINKGO_BUILD_OMP=ON \
             -DGINKGO_BUILD_CUDA=OFF \
             -DGINKGO_BUILD_HIP=OFF \
-            -DGINKGO_BUILD_SYCL=OFF
+            -DGINKGO_BUILD_SYCL=OFF \
+            $RPATH_FLAG
           cmake --build ginkgo-build --parallel $(nproc)
           cmake --install ginkgo-build
 
@@ -132,4 +144,8 @@ jobs:
       # -----------------------
       - name: Run tests (${{ matrix.preset }}, ${{ matrix.compiler }})
         run: |
+          # Ensure clang-built test binaries can find libomp at runtime
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+          export LD_LIBRARY_PATH="/home/linuxbrew/.linuxbrew/opt/llvm/lib:${LD_LIBRARY_PATH}"
+          fi
           ctest --preset=${{ matrix.preset }} --output-on-failure
