@@ -71,7 +71,7 @@ public:
     /// The number of stored entries.
     [[nodiscard]] gko::size_type num_nonzeros() const;
     /// A counter bumped on every value mutation, so a stale cache can be detected.
-    [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; } // TODO: maybe can use a smaller integer type
+    [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
 
     /// Refills the values in place from a pattern with the same structure.
     ///
@@ -81,10 +81,15 @@ public:
     /// :throws std::invalid_argument: if the pattern's nonzero count differs.
     void update_values(const SparsityPattern<T, I>& pattern);
 
-    /// Refills the stored value array directly, in storage order.
+    /// Refills the stored value array directly, in storage order, bumping :cpp:`revision`.
+    ///
+    /// This is the fast in-place refill path. Supported for the array-backed formats
+    /// (``Csr``, ``Coo``, ``Ell``, ``Sellp``); ``Hybrid`` has no single contiguous value
+    /// array and is rejected.
     ///
     /// :param values: New values; length must equal :cpp:`num_nonzeros`.
     /// :throws std::invalid_argument: if ``values`` has the wrong length.
+    /// :throws std::runtime_error: if the storage format has no contiguous value array (``Hybrid``).
     void update_values(std::span<const T> values);
 
     /// Returns an equivalent matrix in another storage format.
@@ -104,15 +109,11 @@ public:
     [[nodiscard]] const I* col_idxs() const;
     /// CSR stored values (length :cpp:`num_nonzeros`); CSR format only.
     ///
+    /// Read-only on purpose: to change values use :cpp:`update_values`, which keeps the
+    /// :cpp:`revision` counter (and therefore any solver cache keyed on it) in sync.
+    ///
     /// :throws std::runtime_error: if the format is not ``Csr``.
     [[nodiscard]] const T* values() const;
-    /// Mutable CSR stored values, for the refill-in-place fast path; CSR format only.
-    ///
-    /// Writing through this pointer does not bump :cpp:`revision`; prefer
-    /// :cpp:`update_values` when a consumer relies on the revision counter.
-    ///
-    /// :throws std::runtime_error: if the format is not ``Csr``.
-    [[nodiscard]] T* values();
 
 private:
     using csr_type = gko::matrix::Csr<T, I>;
@@ -154,7 +155,7 @@ private:
 template<Scalar T, class I>
 SparseMatrix<T, I>::SparseMatrix(Context& ctx, std::string name, std::shared_ptr<gko::LinOp> matrix,
                                  SparseFormat format) :
-    OperatorHandle(ctx, std::move(name), std::move(matrix)), format_{format}
+    OperatorHandle(ctx, std::move(name), std::move(matrix), scalar_type_of<T>()), format_{format}
 {
 }
 
@@ -255,6 +256,5 @@ template<Scalar T, class I> const I* SparseMatrix<T, I>::col_idxs() const
     return require_csr()->get_const_col_idxs();
 }
 template<Scalar T, class I> const T* SparseMatrix<T, I>::values() const { return require_csr()->get_const_values(); }
-template<Scalar T, class I> T* SparseMatrix<T, I>::values() { return require_csr()->get_values(); }
 
 } // namespace miscibility::instrument
