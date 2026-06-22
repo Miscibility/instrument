@@ -50,7 +50,15 @@ endif()
 # clang-tidy — enable with ENABLE_CLANG_TIDY=ON or add to a preset
 option(ENABLE_CLANG_TIDY "Run clang-tidy during compilation" OFF)
 if(ENABLE_CLANG_TIDY)
-    find_program(CLANG_TIDY_EXE NAMES clang-tidy REQUIRED)
+    find_program(CLANG_TIDY_EXE 
+    NAMES 
+        clang-tidy 
+        clang-tidy-22
+        clang-tidy-21
+        clang-tidy-20
+        clang-tidy-19
+        clang-tidy-18
+    REQUIRED)
     set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
 endif()
 
