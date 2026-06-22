@@ -4,7 +4,6 @@
 #include "instrument/context.hpp"
 
 #include <algorithm>
-#include <cassert>
 #include <ginkgo/ginkgo.hpp>
 #include <initializer_list>
 #include <memory>
@@ -35,9 +34,9 @@ namespace miscibility::instrument {
 /// the context (so its applies are timed) and converts implicitly to a
 /// ``gko::LinOp`` for raw Ginkgo APIs.
 ///
-/// Element access and iteration assume a host executor; they are undefined on a
-/// device executor (see :cpp:`is_host`). A ``Vector`` is deliberately a single
-/// column — multiple right-hand sides belong to ``DenseMatrix``.
+/// Element access and iteration require a host executor; on a device executor they
+/// throw ``std::logic_error`` (see :cpp:`is_host`). A ``Vector`` is deliberately a
+/// single column — multiple right-hand sides belong to ``DenseMatrix``.
 ///
 /// :tparam T: Floating-point element type.
 template<Scalar T = double> class Vector : public OperatorHandle {
@@ -93,10 +92,14 @@ public:
     /// :returns: A vector aliasing ``data``.
     static Vector view(Context& ctx, std::string name, T* data, size_type n);
 
-    /// Pointer to the underlying contiguous storage (host executors only).
-    [[nodiscard]] T* data() noexcept;
-    /// Pointer to the underlying contiguous storage (host executors only).
-    [[nodiscard]] const T* data() const noexcept;
+    /// Pointer to the underlying contiguous storage.
+    ///
+    /// :throws std::logic_error: if the executor is not a host executor.
+    [[nodiscard]] T* data();
+    /// Pointer to the underlying contiguous storage.
+    ///
+    /// :throws std::logic_error: if the executor is not a host executor.
+    [[nodiscard]] const T* data() const;
     /// Number of elements.
     [[nodiscard]] size_type size() const noexcept;
     /// True when the vector has no elements.
@@ -177,20 +180,26 @@ private:
     [[nodiscard]] dense_type* dense() noexcept;
     [[nodiscard]] const dense_type* dense() const noexcept;
 
+    void require_host() const;
     void check_same_size(size_type other) const;
 
-    [[nodiscard]] std::unique_ptr<dense_type> make_scalar(T value) const;
+    // Reusable 1x1 scratch buffers, so the BLAS-1 methods don't allocate per call.
+    [[nodiscard]] dense_type* scalar(T value) const;
+    [[nodiscard]] dense_type& result_buffer() const;
     [[nodiscard]] T read_scalar(const dense_type& result) const;
 
     static std::shared_ptr<dense_type> make_zeros(const executor_ptr& exec, size_type n);
     static std::shared_ptr<dense_type> make_filled(const executor_ptr& exec, size_type n, T value);
     static std::shared_ptr<dense_type> make_copy(const executor_ptr& exec, const T* data, size_type n);
     static std::shared_ptr<dense_type> make_view(const executor_ptr& exec, T* data, size_type n);
+
+    mutable std::shared_ptr<dense_type> scalar_scratch_;
+    mutable std::shared_ptr<dense_type> result_scratch_;
 };
 
 template<Scalar T>
 Vector<T>::Vector(Context& ctx, std::string name, std::shared_ptr<dense_type> dense) :
-    OperatorHandle(ctx, std::move(name), std::move(dense))
+    OperatorHandle(ctx, std::move(name), std::move(dense), scalar_type_of<T>())
 {
 }
 
@@ -254,21 +263,24 @@ std::shared_ptr<gko::matrix::Dense<T>> Vector<T>::make_view(const executor_ptr& 
     return gko::share(std::move(dense));
 }
 
-template<Scalar T> T* Vector<T>::data() noexcept
+template<Scalar T> T* Vector<T>::data()
 {
-    assert(is_host() && "Vector element access requires a host executor");
+    require_host();
     return dense()->get_values();
 }
-template<Scalar T> const T* Vector<T>::data() const noexcept
+template<Scalar T> const T* Vector<T>::data() const
 {
-    assert(is_host() && "Vector element access requires a host executor");
+    require_host();
     return dense()->get_const_values();
 }
 template<Scalar T> typename Vector<T>::size_type Vector<T>::size() const noexcept { return dense()->get_size()[0]; }
 template<Scalar T> bool Vector<T>::empty() const noexcept { return size() == 0; }
-template<Scalar T> bool Vector<T>::is_host() const noexcept
+template<Scalar T> bool Vector<T>::is_host() const noexcept { return context().is_host(); }
+template<Scalar T> void Vector<T>::require_host() const
 {
-    return dynamic_cast<const gko::OmpExecutor*>(context().executor().get()) != nullptr;
+    if (!is_host()) {
+        throw std::logic_error{"miscibility::instrument::Vector element access requires a host executor"};
+    }
 }
 
 template<Scalar T> T& Vector<T>::operator[](size_type i) { return data()[i]; }
@@ -303,40 +315,40 @@ template<Scalar T> Vector<T>& Vector<T>::fill(T value)
 }
 template<Scalar T> Vector<T>& Vector<T>::scale(T alpha)
 {
-    dense()->scale(make_scalar(alpha));
+    dense()->scale(scalar(alpha));
     return *this;
 }
 template<Scalar T> Vector<T>& Vector<T>::add_scaled(T alpha, const Vector& x)
 {
     check_same_size(x.size());
-    dense()->add_scaled(make_scalar(alpha), x.dense());
+    dense()->add_scaled(scalar(alpha), x.dense());
     return *this;
 }
 template<Scalar T> Vector<T>& Vector<T>::sub_scaled(T alpha, const Vector& x)
 {
     check_same_size(x.size());
-    dense()->sub_scaled(make_scalar(alpha), x.dense());
+    dense()->sub_scaled(scalar(alpha), x.dense());
     return *this;
 }
 
 template<Scalar T> T Vector<T>::dot(const Vector& x) const
 {
     check_same_size(x.size());
-    auto result = dense_type::create(context().executor(), gko::dim<2>{1, 1});
-    dense()->compute_dot(x.dense(), result);
-    return read_scalar(*result);
+    dense_type& result = result_buffer();
+    dense()->compute_dot(x.dense(), &result);
+    return read_scalar(result);
 }
 template<Scalar T> T Vector<T>::norm2() const
 {
-    auto result = dense_type::create(context().executor(), gko::dim<2>{1, 1});
-    dense()->compute_norm2(result);
-    return read_scalar(*result);
+    dense_type& result = result_buffer();
+    dense()->compute_norm2(&result);
+    return read_scalar(result);
 }
 template<Scalar T> T Vector<T>::norm1() const
 {
-    auto result = dense_type::create(context().executor(), gko::dim<2>{1, 1});
-    dense()->compute_norm1(result);
-    return read_scalar(*result);
+    dense_type& result = result_buffer();
+    dense()->compute_norm1(&result);
+    return read_scalar(result);
 }
 
 template<Scalar T> Vector<T>& Vector<T>::operator*=(T alpha) { return scale(alpha); }
@@ -353,11 +365,21 @@ template<Scalar T> const gko::matrix::Dense<T>* Vector<T>::dense() const noexcep
     return static_cast<const dense_type*>(linop().get());
 }
 
-template<Scalar T> std::unique_ptr<gko::matrix::Dense<T>> Vector<T>::make_scalar(T value) const
+template<Scalar T> gko::matrix::Dense<T>* Vector<T>::scalar(T value) const
 {
-    auto scalar = dense_type::create(context().executor(), gko::dim<2>{1, 1});
-    scalar->fill(value);
-    return scalar;
+    if (!scalar_scratch_) {
+        scalar_scratch_ = dense_type::create(context().executor(), gko::dim<2>{1, 1});
+    }
+    scalar_scratch_->fill(value);
+    return scalar_scratch_.get();
+}
+
+template<Scalar T> gko::matrix::Dense<T>& Vector<T>::result_buffer() const
+{
+    if (!result_scratch_) {
+        result_scratch_ = dense_type::create(context().executor(), gko::dim<2>{1, 1});
+    }
+    return *result_scratch_;
 }
 
 template<Scalar T> T Vector<T>::read_scalar(const dense_type& result) const
