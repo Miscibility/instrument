@@ -5,6 +5,7 @@
 #include "instrument/sparse_matrix.hpp"
 #include "instrument/vector.hpp"
 
+#include <cassert>
 #include <cstdint>
 #include <ginkgo/ginkgo.hpp>
 #include <memory>
@@ -21,10 +22,18 @@ enum class PrecondType : std::uint8_t {
     BlockJacobi, ///< Block Jacobi; block size from :cpp:`PrecondOptions::max_block_size`.
     Ilu,         ///< Incomplete LU.
     Ic,          ///< Incomplete Cholesky.
-    Isai,        ///< Incomplete sparse approximate inverse.
-    Sor,         ///< Successive over-relaxation.
-    GaussSeidel, ///< Gauss–Seidel.
+    Isai, ///< NOT YET IMPLEMENTED (throws :cpp:`UnsupportedPreconditioner`). Incomplete sparse approximate inverse.
+    Sor,  ///< NOT YET IMPLEMENTED (throws :cpp:`UnsupportedPreconditioner`). Successive over-relaxation.
+    GaussSeidel, ///< NOT YET IMPLEMENTED (throws :cpp:`UnsupportedPreconditioner`). Gauss–Seidel.
     Custom,      ///< User-provided custom preconditioner.
+};
+
+/// Thrown when a :cpp:`PrecondType` selected in :cpp:`PrecondOptions` is not implemented
+/// in this build. Currently this covers ``Isai``, ``Sor``, and ``GaussSeidel``, and any
+/// non-``None``/``Jacobi``/``BlockJacobi`` type requested in a reduced storage precision.
+class UnsupportedPreconditioner : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
 };
 
 /// Storage precision a preconditioner is built and applied in.
@@ -74,7 +83,8 @@ private:
 
 template<class T, class Low> void PrecisionCastOp<T, Low>::apply_impl(const gko::LinOp* b, gko::LinOp* x) const
 {
-    // FIXME: I do not know if this is necessary. Ginkgo is supposed to work with multi-precision semi-automatically
+    // TODO: this explicit down/up cast around the low-precision inner operator is currently
+    // unverified against Ginkgo's own mixed-precision support; see preconditioner.md (P-2).
     using high_dense = gko::matrix::Dense<T>;
     using low_dense = gko::matrix::Dense<Low>;
     const auto* b_high = gko::as<high_dense>(b);
@@ -92,7 +102,7 @@ template<class T, class Low>
 void PrecisionCastOp<T, Low>::apply_impl(const gko::LinOp* alpha, const gko::LinOp* b, const gko::LinOp* beta,
                                          gko::LinOp* x) const
 {
-    // FIXME: I do not know if this is necessary. Ginkgo is supposed to work with multi-precision semi-automatically
+    // TODO: see the apply_impl(b, x) overload above — explicit cast pending verification (P-2).
     auto* x_high = gko::as<gko::matrix::Dense<T>>(x);
     auto correction = x_high->clone();
     apply_impl(b, correction.get());
@@ -105,7 +115,8 @@ std::shared_ptr<gko::LinOp> build_simple_preconditioner(const std::shared_ptr<co
                                                         std::shared_ptr<const gko::LinOp> matrix, PrecondType type,
                                                         gko::size_type max_block_size)
 {
-    // FIXME: Jacobi moves the matrix. Not sure if that is correct.
+    // generate() consumes the matrix shared_ptr by move; only the pointer moves, the matrix
+    // data is untouched and stays alive through the SparseMatrix's own owning reference.
     switch (type) {
     case PrecondType::None:
         return gko::share(gko::matrix::Identity<V>::create(exec, matrix->get_size()[0]));
@@ -118,8 +129,8 @@ std::shared_ptr<gko::LinOp> build_simple_preconditioner(const std::shared_ptr<co
                               .on(exec)
                               ->generate(std::move(matrix)));
     default:
-        throw std::runtime_error{"miscibility::instrument::Preconditioner reduced precision supports only "
-                                 "None/Jacobi/BlockJacobi"};
+        throw UnsupportedPreconditioner{"miscibility::instrument::Preconditioner reduced precision supports only "
+                                        "None/Jacobi/BlockJacobi"};
     }
 }
 
@@ -193,13 +204,16 @@ private:
 
 template<Scalar T>
 Preconditioner<T>::Preconditioner(Context& ctx, std::string name, const SparseMatrix<T>& matrix, PrecondOptions opts) :
-    OperatorHandle(ctx, std::move(name), generate(ctx, matrix, opts)), type_{opts.type}, storage_{opts.storage}
+    OperatorHandle(ctx, std::move(name), generate(ctx, matrix, opts), scalar_type_of<T>()),
+    type_{opts.type},
+    storage_{opts.storage}
 {
 }
 
 template<Scalar T>
 Preconditioner<T>::Preconditioner(Context& ctx, std::string name, std::shared_ptr<const gko::LinOp> custom) :
-    OperatorHandle(ctx, std::move(name), std::const_pointer_cast<gko::LinOp>(std::move(custom))), type_(PrecondType::Custom)
+    OperatorHandle(ctx, std::move(name), std::const_pointer_cast<gko::LinOp>(std::move(custom)), scalar_type_of<T>()),
+    type_(PrecondType::Custom)
 {
 }
 
@@ -208,7 +222,7 @@ std::shared_ptr<gko::LinOp> Preconditioner<T>::build_double(const std::shared_pt
                                                             std::shared_ptr<const gko::LinOp> matrix,
                                                             const PrecondOptions& opts)
 {
-    // FIXME: Add support for remaining preconditioners
+    // TODO: implement Isai / Sor / GaussSeidel (currently rejected by the default branch).
     switch (opts.type) {
     case PrecondType::None:
     case PrecondType::Jacobi:
@@ -223,7 +237,7 @@ std::shared_ptr<gko::LinOp> Preconditioner<T>::build_double(const std::shared_pt
         return gko::share(gko::preconditioner::Ic<>::build().on(exec)->generate(std::move(factors)));
     }
     default:
-        throw std::runtime_error{"miscibility::instrument::Preconditioner type not supported in this build"};
+        throw UnsupportedPreconditioner{"miscibility::instrument::Preconditioner type not implemented in this build"};
     }
 }
 
@@ -232,7 +246,8 @@ template<class Low>
 std::shared_ptr<gko::LinOp> Preconditioner<T>::build_reduced(const std::shared_ptr<const gko::Executor>& exec,
                                                              const SparseMatrix<T>& matrix, const PrecondOptions& opts)
 {
-    // FIXME: see if this is necessary due to multi-precision build
+    // NOTE: builds the inner preconditioner in reduced precision via an explicit Csr cast;
+    // pending verification against Ginkgo's mixed-precision support (preconditioner.md P-2).
     auto matrix_low = gko::matrix::Csr<Low, int>::create(exec);
     gko::as<gko::matrix::Csr<T, int>>(matrix.linop().get())->convert_to(matrix_low);
     auto inner = detail::build_simple_preconditioner<Low>(exec, std::move(matrix_low), opts.type, opts.max_block_size);
@@ -280,6 +295,7 @@ std::shared_ptr<gko::LinOp> Preconditioner<T>::generate(Context& ctx, const Spar
 
 template<Scalar T> void Preconditioner<T>::apply(const Vector<T>& r, Vector<T>& z) const
 {
+    assert(&r != &z && "Preconditioner::apply output must not alias the input");
     linop()->apply(r.linop(), z.linop());
 }
 
