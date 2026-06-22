@@ -38,19 +38,34 @@ target_compile_options(${PROJECT_NAME}_warnings INTERFACE
 add_library(${PROJECT_NAME}_sanitizers INTERFACE)
 option(ENABLE_SANITIZERS "Enable AddressSanitizer and UBSan" OFF)
 if(ENABLE_SANITIZERS)
+    # -fno-sanitize=vptr: Ginkgo's CRTP solver bases call self() (a downcast to the
+    # most-derived type) during base-class construction, before the derived vptr is
+    # installed. UBSan's vptr check flags this benign UB in third-party headers; on GCC
+    # the resulting diagnostic demangles type names via __cxa_demangle, whose buffer
+    # LeakSanitizer then reports as a leak, failing the debug/gcc CI run.
     target_compile_options(${PROJECT_NAME}_sanitizers INTERFACE
         -fsanitize=address,undefined
+        -fno-sanitize=vptr
         -fno-omit-frame-pointer
     )
     target_link_options(${PROJECT_NAME}_sanitizers INTERFACE
         -fsanitize=address,undefined
+        -fno-sanitize=vptr
     )
 endif()
 
 # clang-tidy — enable with ENABLE_CLANG_TIDY=ON or add to a preset
 option(ENABLE_CLANG_TIDY "Run clang-tidy during compilation" OFF)
 if(ENABLE_CLANG_TIDY)
-    find_program(CLANG_TIDY_EXE NAMES clang-tidy REQUIRED)
+    find_program(CLANG_TIDY_EXE 
+    NAMES 
+        clang-tidy 
+        clang-tidy-22
+        clang-tidy-21
+        clang-tidy-20
+        clang-tidy-19
+        clang-tidy-18
+    REQUIRED)
     set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
 endif()
 
@@ -66,6 +81,24 @@ FetchContent_Declare(highway
     GIT_TAG 1.4.0
 )
 FetchContent_MakeAvailable(highway)
+
+
+# LAPACKE — C interface to LAPACK, used by the dense Factorization wrappers.
+# Provides the system BLAS/LAPACK via find_package(LAPACK) and then locates the
+# LAPACKE header + library. Point CMake at a non-default install with
+# -DCMAKE_PREFIX_PATH=... ; do not hardcode a path here.
+find_package(LAPACK QUIET)
+find_path(LAPACKE_INCLUDE_DIR lapacke.h)
+find_library(LAPACKE_LIBRARY NAMES lapacke)
+if(NOT LAPACK_FOUND OR NOT LAPACKE_INCLUDE_DIR OR NOT LAPACKE_LIBRARY)
+    message(FATAL_ERROR
+        "LAPACKE was not found.\n"
+        "Install LAPACKE (e.g. 'liblapacke-dev' on Debian/Ubuntu) or point CMake "
+        "at it with -DCMAKE_PREFIX_PATH=/path/to/lapacke.\n"
+        "Need: lapacke.h (LAPACKE_INCLUDE_DIR) and the lapacke library "
+        "(LAPACKE_LIBRARY), plus a LAPACK implementation (find_package(LAPACK))."
+    )
+endif()
 
 # Ginkgo — the linear-algebra backend 
 find_package(Ginkgo QUIET)
@@ -93,9 +126,11 @@ target_include_directories(${PROJECT_NAME} INTERFACE
 
 # Propagate Highway to every consumer; array.hpp includes its headers. Marked
 # SYSTEM so the project's -Wall -Wextra -Wpedantic do not fire inside Highway.
-target_link_libraries(${PROJECT_NAME} INTERFACE hwy hwy_contrib)
+target_link_libraries(${PROJECT_NAME} INTERFACE hwy hwy_contrib Ginkgo::ginkgo
+    ${LAPACKE_LIBRARY} ${LAPACK_LIBRARIES})
 target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE
     $<BUILD_INTERFACE:${highway_SOURCE_DIR}>
+    ${LAPACKE_INCLUDE_DIR}
 )
 
 # Ginkgo — the imported target carries its own usage requirements (include dirs,

@@ -16,12 +16,14 @@
 
 namespace miscibility::instrument {
 
-/// Element types an :cpp:`Array` can hold: the standard floating-point types.
+/// Element types an :cpp:`Array` can hold: single- and double-precision floating point.
 ///
-/// The arithmetic kernels are built on SIMD floating-point operations, so the
-/// element type is restricted to ``float``, ``double``, and ``long double``.
+/// The arithmetic kernels are built on SIMD floating-point operations (Highway) and the
+/// dense direct solvers on LAPACKE; neither supports ``long double`` (Highway has no such
+/// lane type and the LAPACKE wrappers branch only on ``float``/``double``), so the element
+/// type is restricted to ``float`` and ``double``.
 template<class T>
-concept Scalar = std::floating_point<T>;
+concept Scalar = std::is_same_v<T, float> || std::is_same_v<T, double>;
 
 /// Length tag selecting a runtime-sized (heap-allocated) :cpp:`Array`.
 ///

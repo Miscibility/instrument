@@ -1,6 +1,5 @@
-#include <ginkgo/ginkgo.hpp>
-
 #include <boost/ut.hpp>
+#include <ginkgo/ginkgo.hpp>
 
 int main()
 {
