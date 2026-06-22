@@ -38,12 +38,19 @@ target_compile_options(${PROJECT_NAME}_warnings INTERFACE
 add_library(${PROJECT_NAME}_sanitizers INTERFACE)
 option(ENABLE_SANITIZERS "Enable AddressSanitizer and UBSan" OFF)
 if(ENABLE_SANITIZERS)
+    # -fno-sanitize=vptr: Ginkgo's CRTP solver bases call self() (a downcast to the
+    # most-derived type) during base-class construction, before the derived vptr is
+    # installed. UBSan's vptr check flags this benign UB in third-party headers; on GCC
+    # the resulting diagnostic demangles type names via __cxa_demangle, whose buffer
+    # LeakSanitizer then reports as a leak, failing the debug/gcc CI run.
     target_compile_options(${PROJECT_NAME}_sanitizers INTERFACE
         -fsanitize=address,undefined
+        -fno-sanitize=vptr
         -fno-omit-frame-pointer
     )
     target_link_options(${PROJECT_NAME}_sanitizers INTERFACE
         -fsanitize=address,undefined
+        -fno-sanitize=vptr
     )
 endif()
 
