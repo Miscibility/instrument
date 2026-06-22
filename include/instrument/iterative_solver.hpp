@@ -18,7 +18,6 @@
 
 namespace miscibility::instrument {
 
-    // FIXME: FGMRES is available via an option while build the GMRES class
 /// Which Krylov iterative solver an :cpp:`IterativeSolver` runs.
 enum class SolverType : std::uint8_t {
     Cg,        ///< Conjugate gradient (SPD systems).
@@ -47,7 +46,7 @@ struct StopOptions {
     std::optional<double> abs_tol = std::nullopt;                      ///< Stop when ``‖r_k‖`` falls below this.
     std::optional<double> rhs_tol = std::nullopt;                      ///< Stop when ``‖r_k‖/‖b‖`` falls below this.
     std::optional<std::chrono::nanoseconds> time_limit = std::nullopt; ///< Stop after this much wall time.
-    bool implicit_residual = false;                     ///< Use the cheaper recurrence residual norm.
+    bool implicit_residual = false;                                    ///< Use the cheaper recurrence residual norm.
 
     /// True when no criterion is set.
     [[nodiscard]] bool empty() const noexcept
@@ -58,11 +57,12 @@ struct StopOptions {
 
 /// Configuration for an :cpp:`IterativeSolver`.
 struct SolverOptions {
-    SolverType type = SolverType::Cg;             ///< Which solver to run.
-    StopOptions stop;                             ///< Stopping criteria (at least one required).
-    unsigned krylov_dim = 100;                    ///< Restart length for ``Gmres`` / ``CbGmres``.
-    std::optional<PrecondOptions> preconditioner = std::nullopt; ///< Preconditioner to generate from ``A`` per solve, if set.
-    bool zero_initial_guess = false;              ///< Zero ``x`` before solving instead of using it as a guess.
+    SolverType type = SolverType::Cg; ///< Which solver to run.
+    StopOptions stop;                 ///< Stopping criteria (at least one required).
+    unsigned krylov_dim = 100;        ///< Restart length for ``Gmres`` / ``CbGmres``.
+    std::optional<PrecondOptions> preconditioner =
+        std::nullopt;                ///< Preconditioner to generate from ``A`` per solve, if set.
+    bool zero_initial_guess = false; ///< Zero ``x`` before solving instead of using it as a guess.
 };
 
 /// The outcome of a solve, populated from Ginkgo's convergence logger.
@@ -91,11 +91,16 @@ struct Statistics {
 ///     auto stats = solver.solve(a, b, x);
 ///     if (stats.converged) { /* x holds the solution */ }
 ///
-/// The cache makes an instance stateful: use one solver per thread and do not
-/// share it across concurrent solves.
+/// Because it derives from :cpp:`OperatorHandle`, once it has been bound (by a :cpp:`solve`
+/// or :cpp:`prepare`) the solver itself converts to a ``gko::LinOp`` — so a solver can be
+/// dropped into a block, a composite, or used as another solver's preconditioner. Before the
+/// first bind its ``LinOp`` is null and :cpp:`size` is ``{0, 0}``.
+///
+/// The cache makes an instance stateful and it is therefore non-copyable: use one solver per
+/// thread and do not share it across concurrent solves.
 ///
 /// :tparam T: Floating-point value type.
-template<Scalar T = double> class IterativeSolver {
+template<Scalar T = double> class IterativeSolver : public OperatorHandle {
 public:
     /// Configures the solver; no matrix is bound yet.
     ///
@@ -104,6 +109,12 @@ public:
     /// :param opts: Solver type, stopping criteria, and preconditioner settings.
     /// :throws std::invalid_argument: if ``opts.stop`` has no criterion set.
     IterativeSolver(Context& ctx, std::string name, SolverOptions opts);
+
+    IterativeSolver(const IterativeSolver&) = delete;
+    IterativeSolver& operator=(const IterativeSolver&) = delete;
+    IterativeSolver(IterativeSolver&&) = delete;
+    IterativeSolver& operator=(IterativeSolver&&) = delete;
+    ~IterativeSolver() = default;
 
     /// Solves ``A x = b``, rebuilding the bound solver only if ``matrix`` changed since the last solve.
     ///
@@ -119,7 +130,9 @@ public:
     /// Solves with a general operator (dense, block, matrix-free, a factorization).
     ///
     /// Caching keys on the operator's identity alone — arbitrary operators have no
-    /// value-refill contract — so mutate-in-place is not detected here.
+    /// value-refill contract — so mutate-in-place is not detected here. Do not mix this
+    /// overload and the :cpp:`SparseMatrix` overload on one solver instance: the two track
+    /// the cache differently (this one ignores the revision counter).
     ///
     /// :param matrix: The system operator.
     /// :param b: Right-hand side.
@@ -145,14 +158,13 @@ private:
     [[nodiscard]] std::shared_ptr<gko::LinOp>
     build_bound(const std::shared_ptr<const gko::LinOp>& system,
                 const std::shared_ptr<const gko::LinOp>& preconditioner) const;
-    Statistics run_apply(const std::shared_ptr<const gko::LinOp>& system, const Vector<T>& b, Vector<T>& x,
-                         bool regenerated);
+    // Builds (and binds) the solver for `system`, generating a preconditioner from `matrix`
+    // when one is configured and `matrix` is non-null, then records the cache key.
+    void regenerate(const std::shared_ptr<const gko::LinOp>& system, const SparseMatrix<T>* matrix);
+    Statistics run_apply(const Vector<T>& b, Vector<T>& x, bool regenerated);
 
-    Context* context_;
-    std::string name_;
     SolverOptions options_;
 
-    std::shared_ptr<gko::LinOp> bound_;
     const gko::LinOp* cached_key_ = nullptr;
     std::uint64_t cached_revision_ = 0;
     bool has_cache_ = false;
@@ -160,7 +172,7 @@ private:
 
 template<Scalar T>
 IterativeSolver<T>::IterativeSolver(Context& ctx, std::string name, SolverOptions opts) :
-    context_{&ctx}, name_{std::move(name)}, options_{opts}
+    OperatorHandle(ctx, std::move(name), scalar_type_of<T>()), options_{opts}
 {
     if (options_.stop.empty()) {
         throw std::invalid_argument{
@@ -171,7 +183,7 @@ IterativeSolver<T>::IterativeSolver(Context& ctx, std::string name, SolverOption
 template<Scalar T>
 std::vector<std::shared_ptr<const gko::stop::CriterionFactory>> IterativeSolver<T>::build_criteria() const
 {
-    auto exec = context_->executor();
+    auto exec = context().executor();
     const StopOptions& stop = options_.stop;
     std::vector<std::shared_ptr<const gko::stop::CriterionFactory>> criteria;
 
@@ -210,7 +222,7 @@ std::shared_ptr<gko::LinOp>
 IterativeSolver<T>::build_bound(const std::shared_ptr<const gko::LinOp>& system,
                                 const std::shared_ptr<const gko::LinOp>& preconditioner) const
 {
-    auto exec = context_->executor();
+    auto exec = context().executor();
     auto criteria = build_criteria();
 
     auto make = [&]<class Solver>() -> std::shared_ptr<gko::LinOp> {
@@ -259,17 +271,29 @@ IterativeSolver<T>::build_bound(const std::shared_ptr<const gko::LinOp>& system,
 }
 
 template<Scalar T>
-Statistics IterativeSolver<T>::run_apply(const std::shared_ptr<const gko::LinOp>& system, const Vector<T>& b,
-                                         Vector<T>& x, bool regenerated)
+void IterativeSolver<T>::regenerate(const std::shared_ptr<const gko::LinOp>& system, const SparseMatrix<T>* matrix)
+{
+    std::shared_ptr<const gko::LinOp> preconditioner;
+    if (matrix != nullptr && options_.preconditioner) {
+        Preconditioner<T> generated{context(), name() + "_precond", *matrix, *options_.preconditioner};
+        preconditioner = generated.linop();
+    }
+    rebind(build_bound(system, preconditioner));
+    cached_key_ = system.get();
+    cached_revision_ = matrix != nullptr ? matrix->revision() : 0;
+    has_cache_ = true;
+}
+
+template<Scalar T> Statistics IterativeSolver<T>::run_apply(const Vector<T>& b, Vector<T>& x, bool regenerated)
 {
     if (options_.zero_initial_guess) {
         x.fill(T{0});
     }
-    auto exec = context_->executor();
+    auto exec = context().executor();
     std::shared_ptr<gko::log::Convergence<T>> logger = gko::share(gko::log::Convergence<T>::create());
-    bound_->add_logger(logger);
-    bound_->apply(b.linop(), x.linop());
-    bound_->remove_logger(logger.get());
+    linop()->add_logger(logger);
+    linop()->apply(b.linop(), x.linop());
+    linop()->remove_logger(logger.get());
 
     Statistics stats;
     stats.regenerated = regenerated;
@@ -281,7 +305,6 @@ Statistics IterativeSolver<T>::run_apply(const std::shared_ptr<const gko::LinOp>
     }
     const auto rhs_norm = b.norm2();
     stats.relative_residual = rhs_norm != 0 ? stats.residual_norm / rhs_norm : 0.0;
-    (void)system;
     return stats;
 }
 
@@ -289,48 +312,26 @@ template<Scalar T> Statistics IterativeSolver<T>::solve(const SparseMatrix<T>& m
 {
     const gko::LinOp* key = matrix.linop().get();
     const std::uint64_t revision = matrix.revision();
-    const bool regenerate = !has_cache_ || cached_key_ != key || cached_revision_ != revision;
-    if (regenerate) {
-        std::shared_ptr<const gko::LinOp> preconditioner;
-        if (options_.preconditioner) {
-            Preconditioner<T> generated{*context_, name_ + "_precond", matrix, *options_.preconditioner};
-            preconditioner = generated.linop();
-        }
-        bound_ = build_bound(matrix.linop(), preconditioner);
-        context_->register_name(bound_.get(), name_);
-        cached_key_ = key;
-        cached_revision_ = revision;
-        has_cache_ = true;
+    const bool regenerate_needed = !has_cache_ || cached_key_ != key || cached_revision_ != revision;
+    if (regenerate_needed) {
+        regenerate(matrix.linop(), &matrix);
     }
-    return run_apply(matrix.linop(), b, x, regenerate);
+    return run_apply(b, x, regenerate_needed);
 }
 
 template<Scalar T> Statistics IterativeSolver<T>::solve(const OperatorHandle& matrix, const Vector<T>& b, Vector<T>& x)
 {
     const gko::LinOp* key = matrix.linop().get();
-    const bool regenerate = !has_cache_ || cached_key_ != key;
-    if (regenerate) {
-        bound_ = build_bound(matrix.linop(), nullptr);
-        context_->register_name(bound_.get(), name_);
-        cached_key_ = key;
-        cached_revision_ = 0;
-        has_cache_ = true;
+    const bool regenerate_needed = !has_cache_ || cached_key_ != key;
+    if (regenerate_needed) {
+        regenerate(matrix.linop(), nullptr);
     }
-    return run_apply(matrix.linop(), b, x, regenerate);
+    return run_apply(b, x, regenerate_needed);
 }
 
 template<Scalar T> void IterativeSolver<T>::prepare(const SparseMatrix<T>& matrix)
 {
-    std::shared_ptr<const gko::LinOp> preconditioner;
-    if (options_.preconditioner) {
-        Preconditioner<T> generated{*context_, name_ + "_precond", matrix, *options_.preconditioner};
-        preconditioner = generated.linop();
-    }
-    bound_ = build_bound(matrix.linop(), preconditioner);
-    context_->register_name(bound_.get(), name_);
-    cached_key_ = matrix.linop().get();
-    cached_revision_ = matrix.revision();
-    has_cache_ = true;
+    regenerate(matrix.linop(), &matrix);
 }
 
 template<Scalar T> void IterativeSolver<T>::force_regenerate() noexcept { has_cache_ = false; }
