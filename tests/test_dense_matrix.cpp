@@ -43,16 +43,17 @@ int main()
             mi::Context ctx;
             mi::DenseMatrix<double> a{ctx, "A", gko::dim<2>{2, 3}};
             expect(a.shape() == gko::dim<2>{2, 3});
-            for (mi::DenseMatrix<double>::size_type i=0; i<a.rows();++i){
-                for (mi::DenseMatrix<double>::size_type j=0; j<a.cols();++j){
-                    expect(a.at(i,j) == 0.0_d);
+            for (mi::DenseMatrix<double>::size_type i = 0; i < a.rows(); ++i) {
+                for (mi::DenseMatrix<double>::size_type j = 0; j < a.cols(); ++j) {
+                    expect(a.at(i, j) == 0.0_d);
                 }
             }
         };
 
         test("matrix_data constructor reads the entries") = [] {
             mi::Context ctx;
-            gko::matrix_data<double, int> data{gko::dim<2>{2, 2}, {{.row=0, .col=0, .val=5.0}, {.row=1, .col=1, .val=6.0}}};
+            gko::matrix_data<double, int> data{gko::dim<2>{2, 2},
+                                               {{.row = 0, .col = 0, .val = 5.0}, {.row = 1, .col = 1, .val = 6.0}}};
             mi::DenseMatrix<double> a{ctx, "A", data};
             expect(a.at(0, 0) == 5.0_d);
             expect(a.at(1, 1) == 6.0_d);
