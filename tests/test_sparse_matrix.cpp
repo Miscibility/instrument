@@ -9,6 +9,8 @@
 #include <boost/ut.hpp>
 #include <ginkgo/ginkgo.hpp>
 #include <memory>
+#include <span>
+#include <vector>
 
 namespace mi = miscibility::instrument;
 
@@ -158,7 +160,7 @@ int main()
             }
         };
 
-        test("CSR accessors expose canonical arrays and the value write path changes apply") = [] {
+        test("CSR accessors expose canonical arrays and update_values changes apply") = [] {
             mi::Context ctx;
             mi::SparseMatrix<double> a{ctx, "A", make_pattern()};
             // row_ptrs has length rows+1, last entry == nnz.
@@ -168,7 +170,14 @@ int main()
             expect(a.col_idxs()[0] == 0_i);
             expect(a.values()[0] == 2.0_d);
 
-            a.values()[0] = 20.0;
+            // Refill in place via the supported path, which bumps revision().
+            const auto nnz = a.num_nonzeros();
+            std::vector<double> vals(a.values(), a.values() + nnz);
+            vals[0] = 20.0;
+            const auto before = a.revision();
+            a.update_values(std::span<const double>{vals});
+            expect(a.revision() == before + 1);
+
             mi::Vector<double> x{ctx, "x", {1.0, 0.0, 0.0}};
             mi::Vector<double> y{ctx, "y", 3};
             a.linop()->apply(x.linop(), y.linop());
