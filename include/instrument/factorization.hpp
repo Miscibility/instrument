@@ -214,7 +214,7 @@ template<Scalar T> void DenseFactorizationOp<T>::factorize()
         const lapack_int info = lapacke_getrf<T>(rows(), cols(), a, cols(), pivots_.get_data());
         if (info > 0) {
             throw FactorizationError{"LU factorization found a singular matrix (zero pivot at index " +
-                                     std::to_string(info) + ")"};
+                                     std::to_string(info) + ", 1-based)"};
         }
         break;
     }
@@ -222,7 +222,7 @@ template<Scalar T> void DenseFactorizationOp<T>::factorize()
         const lapack_int info = lapacke_potrf<T>('U', cols(), a, cols());
         if (info > 0) {
             throw FactorizationError{"Cholesky factorization found a non-positive-definite matrix (leading minor " +
-                                     std::to_string(info) + ")"};
+                                     std::to_string(info) + ", 1-based)"};
         }
         break;
     }
@@ -230,7 +230,8 @@ template<Scalar T> void DenseFactorizationOp<T>::factorize()
         pivots_ = gko::array<lapack_int>{factors_.get_executor(), static_cast<gko::size_type>(cols())};
         const lapack_int info = lapacke_sytrf<T>('U', cols(), a, cols(), pivots_.get_data());
         if (info > 0) {
-            throw FactorizationError{"LDL^T factorization found a singular block (index " + std::to_string(info) + ")"};
+            throw FactorizationError{"LDL^T factorization found a singular block (index " + std::to_string(info) +
+                                     ", 1-based)"};
         }
         break;
     }
@@ -247,22 +248,24 @@ template<Scalar T> void DenseFactorizationOp<T>::solve_into(const dense_type& b,
     const lapack_int nrhs = static_cast<lapack_int>(b.get_size()[1]);
     const T* a = factors_.get_const_data();
 
+    const auto b_stride = static_cast<lapack_int>(b.get_stride());
+    const auto x_stride = static_cast<lapack_int>(x.get_stride());
+
     if (kind_ == FactorKind::QR) {
         // gather b (rows x nrhs) into a compact buffer, form Q^T b, then back-substitute R.
         gko::array<T> work{factors_.get_executor(),
                            static_cast<gko::size_type>(rows()) * static_cast<gko::size_type>(nrhs)};
         for (lapack_int r = 0; r < rows(); ++r) {
-            for (lapack_int c = 0; c < nrhs; ++c) {
-                work.get_data()[(r * nrhs) + c] =
-                    b.get_const_values()[(r * static_cast<lapack_int>(b.get_stride())) + c];
-            }
+            std::copy_n(b.get_const_values() + (r * b_stride), nrhs, work.get_data() + (r * nrhs));
         }
         lapacke_ormqr<T>(rows(), nrhs, cols(), a, cols(), tau_.get_const_data(), work.get_data(), nrhs);
-        lapacke_trtrs<T>(cols(), nrhs, a, cols(), work.get_data(), nrhs);
+        const lapack_int info = lapacke_trtrs<T>(cols(), nrhs, a, cols(), work.get_data(), nrhs);
+        if (info > 0) {
+            throw FactorizationError{"QR solve found a rank-deficient system (zero on the R diagonal at index " +
+                                     std::to_string(info) + ", 1-based)"};
+        }
         for (lapack_int r = 0; r < cols(); ++r) {
-            for (lapack_int c = 0; c < nrhs; ++c) {
-                x.get_values()[(r * static_cast<lapack_int>(x.get_stride())) + c] = work.get_data()[(r * nrhs) + c];
-            }
+            std::copy_n(work.get_data() + (r * nrhs), nrhs, x.get_values() + (r * x_stride));
         }
         return;
     }
@@ -270,9 +273,7 @@ template<Scalar T> void DenseFactorizationOp<T>::solve_into(const dense_type& b,
     const lapack_int n = cols();
     gko::array<T> work{factors_.get_executor(), static_cast<gko::size_type>(n) * static_cast<gko::size_type>(nrhs)};
     for (lapack_int r = 0; r < n; ++r) {
-        for (lapack_int c = 0; c < nrhs; ++c) {
-            work.get_data()[(r * nrhs) + c] = b.get_const_values()[(r * static_cast<lapack_int>(b.get_stride())) + c];
-        }
+        std::copy_n(b.get_const_values() + (r * b_stride), nrhs, work.get_data() + (r * nrhs));
     }
     switch (kind_) {
     case FactorKind::LU:
@@ -288,9 +289,7 @@ template<Scalar T> void DenseFactorizationOp<T>::solve_into(const dense_type& b,
         break;
     }
     for (lapack_int r = 0; r < n; ++r) {
-        for (lapack_int c = 0; c < nrhs; ++c) {
-            x.get_values()[(r * static_cast<lapack_int>(x.get_stride())) + c] = work.get_data()[(r * nrhs) + c];
-        }
+        std::copy_n(work.get_data() + (r * nrhs), nrhs, x.get_values() + (r * x_stride));
     }
 }
 
@@ -365,7 +364,7 @@ private:
 
 template<Scalar T>
 Factorization<T>::Factorization(Context& ctx, std::string name, const DenseMatrix<T>& matrix, FactorKind kind) :
-    OperatorHandle(ctx, std::move(name), factor(ctx, matrix, kind)), kind_{kind}
+    OperatorHandle(ctx, std::move(name), factor(ctx, matrix, kind), scalar_type_of<T>()), kind_{kind}
 {
 }
 
