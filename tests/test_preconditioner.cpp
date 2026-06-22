@@ -154,6 +154,13 @@ int main()
             mi::Preconditioner<double> m{ctx, "M", a};
             expect(accepts_linop(m));
         };
+
+        test("an unimplemented preconditioner type throws UnsupportedPreconditioner") = [] {
+            mi::Context ctx;
+            auto a = make_diagonal(ctx, {2.0, 4.0});
+            expect(throws<mi::UnsupportedPreconditioner>(
+                [&] { mi::Preconditioner<double> m{ctx, "M", a, {.type = mi::PrecondType::Sor}}; }));
+        };
     };
 
     return 0;
