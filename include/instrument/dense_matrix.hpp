@@ -4,7 +4,6 @@
 #include "instrument/context.hpp"
 #include "instrument/vector.hpp"
 
-#include <cassert>
 #include <ginkgo/ginkgo.hpp>
 #include <initializer_list>
 #include <memory>
@@ -71,18 +70,26 @@ public:
     /// Row stride: the distance in elements between the starts of consecutive rows in :cpp:`data`.
     [[nodiscard]] size_type stride() const noexcept;
 
-    /// The entry at row ``i``, column ``j`` (host executors only).
+    /// The entry at row ``i``, column ``j``.
+    ///
+    /// :throws std::logic_error: if the executor is not a host executor.
     [[nodiscard]] T& at(size_type i, size_type j);
-    /// The entry at row ``i``, column ``j`` (host executors only).
+    /// The entry at row ``i``, column ``j``.
+    ///
+    /// :throws std::logic_error: if the executor is not a host executor.
     [[nodiscard]] const T& at(size_type i, size_type j) const;
     /// Pointer to the row-major storage; entry ``(i, j)`` is at ``data()[i*stride() + j]``.
-    [[nodiscard]] T* data() noexcept;
+    ///
+    /// :throws std::logic_error: if the executor is not a host executor.
+    [[nodiscard]] T* data();
     /// Pointer to the row-major storage; entry ``(i, j)`` is at ``data()[i*stride() + j]``.
-    [[nodiscard]] const T* data() const noexcept;
+    ///
+    /// :throws std::logic_error: if the executor is not a host executor.
+    [[nodiscard]] const T* data() const;
 
     /// Computes the matrix–vector product ``y = A*x``.
     ///
-    /// :param x: Input vector, length :cpp:`cols`.
+    /// :param x: Input vector, length :cpp:`cols`; must not alias ``y``.
     /// :param y: Output vector, length :cpp:`rows`; overwritten.
     void apply(const Vector<T>& x, Vector<T>& y) const;
 
@@ -133,18 +140,22 @@ private:
     [[nodiscard]] dense_type* dense() noexcept;
     [[nodiscard]] const dense_type* dense() const noexcept;
 
-    [[nodiscard]] std::unique_ptr<dense_type> make_scalar(T value) const;
+    void require_host() const;
+    // Reusable 1x1 scratch buffer, so the scalar/fused methods don't allocate per call.
+    [[nodiscard]] dense_type* scalar(T value) const;
     void check_same_shape(gko::dim<2> other) const;
 
     static std::shared_ptr<dense_type> make_zeros(Context& ctx, gko::dim<2> shape);
     static std::shared_ptr<dense_type> make_from_rows(Context& ctx,
                                                       std::initializer_list<std::initializer_list<T>> rows);
     static std::shared_ptr<dense_type> make_from_data(Context& ctx, const gko::matrix_data<T, int>& data);
+
+    mutable std::shared_ptr<dense_type> scalar_scratch_;
 };
 
 template<Scalar T>
 DenseMatrix<T>::DenseMatrix(Context& ctx, std::string name, std::shared_ptr<dense_type> dense) :
-    OperatorHandle(ctx, std::move(name), std::move(dense))
+    OperatorHandle(ctx, std::move(name), std::move(dense), scalar_type_of<T>())
 {
 }
 
@@ -222,16 +233,30 @@ template<Scalar T> typename DenseMatrix<T>::size_type DenseMatrix<T>::stride() c
 
 template<Scalar T> T& DenseMatrix<T>::at(size_type i, size_type j)
 {
-    assert(context().executor()->get_master() == context().executor() && "element access requires a host executor");
+    require_host();
     return dense()->at(i, j);
 }
 template<Scalar T> const T& DenseMatrix<T>::at(size_type i, size_type j) const
 {
-    assert(context().executor()->get_master() == context().executor() && "element access requires a host executor");
+    require_host();
     return dense()->at(i, j);
 }
-template<Scalar T> T* DenseMatrix<T>::data() noexcept { return dense()->get_values(); }
-template<Scalar T> const T* DenseMatrix<T>::data() const noexcept { return dense()->get_const_values(); }
+template<Scalar T> T* DenseMatrix<T>::data()
+{
+    require_host();
+    return dense()->get_values();
+}
+template<Scalar T> const T* DenseMatrix<T>::data() const
+{
+    require_host();
+    return dense()->get_const_values();
+}
+template<Scalar T> void DenseMatrix<T>::require_host() const
+{
+    if (!context().is_host()) {
+        throw std::logic_error{"miscibility::instrument::DenseMatrix element access requires a host executor"};
+    }
+}
 
 template<Scalar T> void DenseMatrix<T>::apply(const Vector<T>& x, Vector<T>& y) const
 {
@@ -243,7 +268,12 @@ template<Scalar T> void DenseMatrix<T>::apply(const DenseMatrix<T>& other, Dense
 }
 template<Scalar T> void DenseMatrix<T>::apply(T alpha, const Vector<T>& x, T beta, Vector<T>& y) const
 {
-    linop()->apply(make_scalar(alpha), x.linop(), make_scalar(beta), y.linop());
+    // alpha and beta both need a 1x1 Dense; the single scratch buffer can only hold one at a
+    // time, so beta gets its own short-lived buffer here.
+    // FIXME: make this 2 scratch scalars?
+    auto beta_scalar = dense_type::create(context().executor(), gko::dim<2>{1, 1});
+    beta_scalar->fill(beta);
+    linop()->apply(scalar(alpha), x.linop(), beta_scalar, y.linop());
 }
 
 template<Scalar T> DenseMatrix<T>& DenseMatrix<T>::fill(T value)
@@ -253,13 +283,13 @@ template<Scalar T> DenseMatrix<T>& DenseMatrix<T>::fill(T value)
 }
 template<Scalar T> DenseMatrix<T>& DenseMatrix<T>::scale(T alpha)
 {
-    dense()->scale(make_scalar(alpha));
+    dense()->scale(scalar(alpha));
     return *this;
 }
 template<Scalar T> DenseMatrix<T>& DenseMatrix<T>::add_scaled(T alpha, const DenseMatrix& other)
 {
     check_same_shape(other.shape());
-    dense()->add_scaled(make_scalar(alpha), other.dense());
+    dense()->add_scaled(scalar(alpha), other.dense());
     return *this;
 }
 
@@ -270,9 +300,7 @@ template<Scalar T> void DenseMatrix<T>::copy_values(T* out) const
     const size_type row_stride = stride();
     const T* values = data();
     for (size_type i = 0; i < row_count; ++i) {
-        for (size_type j = 0; j < col_count; ++j) {
-            out[(i * col_count) + j] = values[(i * row_stride) + j];
-        }
+        std::copy_n(values + (i * row_stride), col_count, out + (i * col_count));
     }
 }
 template<Scalar T> gko::matrix_data<T, int> DenseMatrix<T>::to_matrix_data() const
@@ -291,11 +319,13 @@ template<Scalar T> const gko::matrix::Dense<T>* DenseMatrix<T>::dense() const no
     return static_cast<const dense_type*>(linop().get());
 }
 
-template<Scalar T> std::unique_ptr<gko::matrix::Dense<T>> DenseMatrix<T>::make_scalar(T value) const
+template<Scalar T> gko::matrix::Dense<T>* DenseMatrix<T>::scalar(T value) const
 {
-    auto scalar = dense_type::create(context().executor(), gko::dim<2>{1, 1});
-    scalar->fill(value);
-    return scalar;
+    if (!scalar_scratch_) {
+        scalar_scratch_ = dense_type::create(context().executor(), gko::dim<2>{1, 1});
+    }
+    scalar_scratch_->fill(value);
+    return scalar_scratch_.get();
 }
 
 template<Scalar T> void DenseMatrix<T>::check_same_shape(gko::dim<2> other) const
