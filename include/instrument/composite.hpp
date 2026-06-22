@@ -6,6 +6,7 @@
 #include <ginkgo/ginkgo.hpp>
 #include <initializer_list>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -15,8 +16,8 @@ namespace miscibility::instrument {
 namespace detail {
 
 struct AdoptedHandle : OperatorHandle {
-    AdoptedHandle(Context& ctx, std::string name, std::shared_ptr<gko::LinOp> op) :
-        OperatorHandle(ctx, std::move(name), std::move(op))
+    AdoptedHandle(Context& ctx, std::string name, std::shared_ptr<gko::LinOp> op, ScalarType scalar_type) :
+        OperatorHandle(ctx, std::move(name), std::move(op), scalar_type)
     {
     }
 };
@@ -31,9 +32,12 @@ struct AdoptedHandle : OperatorHandle {
 /// :param ctx: Context the handle binds to and registers with.
 /// :param name: Name to register and time the operator under.
 /// :param op: The operator to wrap.
-inline OperatorHandle make_operator_handle(Context& ctx, std::string name, std::shared_ptr<gko::LinOp> op)
+/// :param scalar_type: The value type the operator works in (defaults to ``Unknown``, which
+///     makes the wrapped handle unusable in the ``+``/``-``/``*`` DSL).
+inline OperatorHandle make_operator_handle(Context& ctx, std::string name, std::shared_ptr<gko::LinOp> op,
+                                           ScalarType scalar_type = ScalarType::Unknown)
 {
-    return detail::AdoptedHandle{ctx, std::move(name), std::move(op)};
+    return detail::AdoptedHandle{ctx, std::move(name), std::move(op), scalar_type};
 }
 
 // TODO: Make sure a linear solver can also be put into this hierarchy
@@ -112,12 +116,13 @@ inline const gko::LinOp* BlockMatrix::block_at(size_type i, size_type j) const
 ///
 /// The result is lazy: it stores the operands (and a tiny scalar per coefficient)
 /// and forms no combined matrix. The cost is paid at each ``apply`` as one
-/// sub-apply per term.
+/// sub-apply per term — so for an operator hammered in a hot Krylov loop prefer a
+/// materialized matrix; for assembly and occasional operators it is ideal.
 ///
 /// :param ctx: Context the result lives on and registers with.
 /// :param name: Name reported for the combination in timing output.
 /// :param terms: ``(coefficient, operator)`` pairs; all operators must share a size.
-/// :tparam T: Value type of the coefficients.
+/// :tparam T: Value type of the coefficients; must match the operands' value type.
 ///
 /// Operands are taken as ``shared_ptr<const gko::LinOp>``; any wrapper converts to
 /// that implicitly, so passing a ``SparseMatrix`` (etc.) narrows straight to the
@@ -130,16 +135,17 @@ OperatorHandle combination(Context& ctx, std::string name,
 ///
 /// The product is applied right-to-left (``op_last`` first) and is lazy: no
 /// product matrix is formed, so each ``apply`` chains the sub-applies through
-/// cached intermediate vectors.
+/// cached intermediate vectors. Like :cpp:`combination`, prefer a materialized
+/// matrix when the product is applied repeatedly in a hot loop.
 ///
 /// :param ctx: Context the result lives on and registers with.
 /// :param name: Name reported for the composition in timing output.
 /// :param ops: The operators to compose, left to right.
 /// :tparam T: Value type of the operands.
 ///
-/// Operands are taken as ``shared_ptr<const gko::LinOp>``; any wrapper converts to
-/// that implicitly, so passing a ``SparseMatrix`` (etc.) narrows straight to the
-/// underlying operator with no copy of the handle and no object slicing.
+/// Operands are taken as ``shared_ptr<const gko::LinOp>`` (matching :cpp:`combination`); any
+/// wrapper converts to that implicitly, so passing a ``SparseMatrix`` (etc.) narrows straight
+/// to the underlying operator with no copy of the handle and no object slicing.
 template<Scalar T = double>
 OperatorHandle composition(Context& ctx, std::string name,
                            std::initializer_list<std::shared_ptr<const gko::LinOp>> ops);
@@ -161,10 +167,11 @@ OperatorHandle combination(Context& ctx, std::string name,
     }
     auto combined =
         gko::Combination<T>::create(coefficients.begin(), coefficients.end(), operators.begin(), operators.end());
-    return make_operator_handle(ctx, std::move(name), gko::share(std::move(combined)));
+    return make_operator_handle(ctx, std::move(name), gko::share(std::move(combined)), scalar_type_of<T>());
 }
 
-template<Scalar T> OperatorHandle composition(Context& ctx, std::string name, std::initializer_list<OperatorHandle> ops)
+template<Scalar T>
+OperatorHandle composition(Context& ctx, std::string name, std::initializer_list<std::shared_ptr<const gko::LinOp>> ops)
 {
     std::vector<std::shared_ptr<const gko::LinOp>> operators;
     operators.reserve(ops.size());
@@ -172,47 +179,94 @@ template<Scalar T> OperatorHandle composition(Context& ctx, std::string name, st
         operators.push_back(op);
     }
     auto composed = gko::Composition<T>::create(operators.begin(), operators.end());
-    return make_operator_handle(ctx, std::move(name), gko::share(std::move(composed)));
+    return make_operator_handle(ctx, std::move(name), gko::share(std::move(composed)), scalar_type_of<T>());
 }
+
+namespace detail {
+
+/// Invokes ``f.operator()<T>()`` with ``T`` chosen from a handle's runtime scalar type.
+///
+/// This is how the type-erased DSL operators recover a concrete value type to build a
+/// matching ``gko::Combination``/``gko::Composition``.
+template<class F> OperatorHandle dispatch_by_scalar(ScalarType type, F f)
+{
+    switch (type) {
+    case ScalarType::Float:
+        return f.template operator()<float>();
+    case ScalarType::Double:
+        return f.template operator()<double>();
+    case ScalarType::Unknown:
+        break;
+    }
+    throw std::invalid_argument{"miscibility::instrument operator DSL requires operands with a known scalar type "
+                                "(float or double); heterogeneous blocks and adopted raw operators are unsupported"};
+}
+
+/// The shared scalar type of two DSL operands, or throws if they differ or are unknown.
+inline ScalarType common_scalar_type(const OperatorHandle& a, const OperatorHandle& b)
+{
+    if (a.scalar_type() == ScalarType::Unknown || a.scalar_type() != b.scalar_type()) {
+        throw std::invalid_argument{
+            "miscibility::instrument operator DSL operands must share a known scalar type (float or double)"};
+    }
+    return a.scalar_type();
+}
+
+} // namespace detail
 
 /// The operator sum ``a + b``, as a lazy combination named ``"a+b"``.
 ///
-/// Context is taken from the left operand. Like all the DSL operators this is
-/// O(1) to build and recomputes both sub-applies on every apply, so for an
-/// operator hammered in a hot Krylov loop prefer a materialized matrix; for
-/// assembly and occasional operators it is ideal.
+/// Context and value type are taken from the operands (which must share a known scalar
+/// type). Like all the DSL operators this is O(1) to build and recomputes both sub-applies
+/// on every apply, so for an operator hammered in a hot Krylov loop prefer a materialized
+/// matrix; for assembly and occasional operators it is ideal.
 ///
+/// :throws std::invalid_argument: if the operands have differing or unknown scalar types.
 /// :relates: OperatorHandle
 inline OperatorHandle operator+(const OperatorHandle& a, const OperatorHandle& b)
 {
-    return combination<double>(a.context(), a.name() + "+" + b.name() , {{1.0, a}, {1.0, b}});
+    return detail::dispatch_by_scalar(detail::common_scalar_type(a, b), [&]<class T>() {
+        return combination<T>(a.context(), a.name() + "+" + b.name(), {{T(1), a}, {T(1), b}});
+    });
 }
 
 /// The operator difference ``a - b``, as a lazy combination named ``"a-b"``.
 ///
+/// :throws std::invalid_argument: if the operands have differing or unknown scalar types.
 /// :relates: OperatorHandle
 inline OperatorHandle operator-(const OperatorHandle& a, const OperatorHandle& b)
 {
-    return combination<double>(a.context(), a.name() + "-" + b.name() , {{1.0, a}, {-1.0, b}});
+    return detail::dispatch_by_scalar(detail::common_scalar_type(a, b), [&]<class T>() {
+        return combination<T>(a.context(), a.name() + "-" + b.name(), {{T(1), a}, {T(-1), b}});
+    });
 }
 
 /// The operator product ``a * b`` (apply ``b`` then ``a``), as a lazy composition named ``"a*b"``.
 ///
 /// No product matrix is formed; the apply chains ``a(b(x))``.
 ///
+/// :throws std::invalid_argument: if the operands have differing or unknown scalar types.
 /// :relates: OperatorHandle
 inline OperatorHandle operator*(const OperatorHandle& a, const OperatorHandle& b)
 {
-    return composition<double>(a.context(), a.name() + "*" + b.name() , {a, b});
+    return detail::dispatch_by_scalar(detail::common_scalar_type(a, b), [&]<class T>() {
+        return composition<T>(a.context(), a.name() + "*" + b.name(), {a, b});
+    });
 }
 
 /// The scaled operator ``scalar * a``, as a lazy combination named ``"scalar*a"``.
 ///
-/// :tparam T: Value type of the scalar.
+/// The coefficient is built in ``a``'s value type, so a ``double`` literal scaling a
+/// ``float`` operator is narrowed to ``float`` rather than mismatching.
+///
+/// :tparam S: Value type of the scalar literal.
+/// :throws std::invalid_argument: if ``a`` has an unknown scalar type.
 /// :relates: OperatorHandle
-template<Scalar T> OperatorHandle operator*(T scalar, const OperatorHandle& a)
+template<Scalar S> OperatorHandle operator*(S scalar, const OperatorHandle& a)
 {
-    return combination<T>(a.context(), std::to_string(scalar) + "*" + a.name() , {{scalar, a}});
+    return detail::dispatch_by_scalar(a.scalar_type(), [&]<class T>() {
+        return combination<T>(a.context(), std::to_string(scalar) + "*" + a.name(), {{static_cast<T>(scalar), a}});
+    });
 }
 
 } // namespace miscibility::instrument
