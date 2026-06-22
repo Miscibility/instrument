@@ -182,6 +182,31 @@ int main()
             // (A+B)(C x) = (2+3)*(1*1) = 5
             expect(y.at(0) == 5.0_d);
         };
+
+        test("the DSL works for a non-double (float) scalar type") = [] {
+            mi::Context ctx;
+            mi::SparsityPattern<float> pa{gko::dim<2>{2, 2}};
+            pa.add_value(0, 0, 2.0F);
+            pa.add_value(1, 1, 2.0F);
+            mi::SparseMatrix<float> a{ctx, "A", pa};
+            mi::SparsityPattern<float> pb{gko::dim<2>{2, 2}};
+            pb.add_value(0, 0, 3.0F);
+            pb.add_value(1, 1, 3.0F);
+            mi::SparseMatrix<float> b{ctx, "B", pb};
+
+            auto sum = a + b; // a gko::Combination<float>, not <double>
+            mi::Vector<float> x{ctx, "x", {1.0F, 1.0F}};
+            mi::Vector<float> y{ctx, "y", 2};
+            sum.linop()->apply(x.linop(), y.linop());
+            expect(std::abs(y.at(0) - 5.0F) < 1e-6F);
+        };
+
+        test("the DSL rejects operands with an unknown scalar type") = [] {
+            mi::Context ctx;
+            auto a = diagonal_sparse(ctx, "A", {2.0, 2.0});
+            mi::BlockMatrix block{ctx, "M", {{a}}}; // heterogeneous block -> Unknown scalar type
+            expect(throws<std::invalid_argument>([&] { auto bad = block + block; }));
+        };
     };
 
     return 0;
