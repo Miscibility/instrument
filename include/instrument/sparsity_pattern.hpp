@@ -26,7 +26,9 @@ namespace miscibility::instrument {
 ///     auto data = pattern.to_matrix_data();  // feed to a matrix's read()
 ///
 /// :tparam T: Floating-point value type.
-/// :tparam I: Index type for rows and columns (defaults to ``int``).
+/// :tparam I: Index type for rows and columns (defaults to ``int``). Use a 64-bit type
+///     (e.g. ``std::int64_t``) for matrices whose dimension or nonzero count exceeds
+///     ``2``\ :sup:`31`.
 template<Scalar T = double, class I = int> class SparsityPattern {
 public:
     /// Creates an empty pattern of the given shape.
@@ -62,6 +64,9 @@ public:
 private:
     void check_bounds(I row, I col) const;
 
+    // `mutable` only so the const accessors can call Ginkgo's get_value(), which is
+    // (gratuitously) non-const. get_ordered_data()/get_num_stored_elements()/get_size()
+    // are genuinely const and do not mutate the buffer, so concurrent const access is safe.
     mutable gko::matrix_assembly_data<T, I> assembly_;
 };
 
