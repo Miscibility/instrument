@@ -23,6 +23,10 @@ jobs:
       # and switch the clone step to the simpler shallow-by-tag form (see the comment there).
       GINKGO_REF: bec4d1ad9315c222b8037500e427cda8b51fcb5e  # develop @ Ginkgo 2.0.0
       GINKGO_BUILD_REV: "1"       # bump to force a rebuild without changing GINKGO_REF
+      # Google Highway is fetched-and-built by default, which is slow; cache a
+      # system install instead and let CMake's find_package(hwy) pick it up.
+      HIGHWAY_REF: "1.4.0"        # keep in sync with the FetchContent GIT_TAG in CMakeLists.txt
+      HIGHWAY_BUILD_REV: "1"      # bump to force a rebuild without changing HIGHWAY_REF
 
     steps:
       - name: Checkout repository
@@ -108,6 +112,36 @@ jobs:
 
       - name: Point CMake at the cached Ginkgo
         run: echo "Ginkgo_ROOT=$GITHUB_WORKSPACE/.ginkgo-install" >> "$GITHUB_ENV"
+
+      # -----------------------
+      # Restore (or build) Google Highway — cached by version + OS + compiler
+      # -----------------------
+      - name: Cache Highway install
+        id: cache-highway
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/.highway-install
+          key: highway-${{ runner.os }}-${{ matrix.compiler }}-${{ env.HIGHWAY_REF }}-${{ env.HIGHWAY_BUILD_REV }}
+
+      - name: Build and install Highway (cache miss only)
+        if: steps.cache-highway.outputs.cache-hit != 'true'
+        run: |
+          # HIGHWAY_REF is a release tag, so a shallow clone by tag is enough.
+          git clone --depth 1 --branch "$HIGHWAY_REF" \
+            https://github.com/google/highway.git highway-src
+          cmake -S highway-src -B highway-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/.highway-install" \
+            -DHWY_ENABLE_TESTS=OFF \
+            -DHWY_ENABLE_EXAMPLES=OFF \
+            -DHWY_ENABLE_CONTRIB=ON \
+            -DHWY_ENABLE_INSTALL=ON \
+            -DBUILD_TESTING=OFF
+          cmake --build highway-build --parallel $(nproc)
+          cmake --install highway-build
+
+      - name: Point CMake at the cached Highway
+        run: echo "hwy_ROOT=$GITHUB_WORKSPACE/.highway-install" >> "$GITHUB_ENV"
 
       # -----------------------
       # Configure using preset

@@ -69,18 +69,29 @@ if(ENABLE_CLANG_TIDY)
     set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
 endif()
 
-# Google Highway — explicit SIMD backing instrument/array.hpp. Fetched here (not
+# Google Highway — explicit SIMD backing instrument/array.hpp. Pulled in here (not
 # under tests/) so the whole library, and any consumer of it, links to Highway.
-include(FetchContent)
-set(HWY_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
-set(HWY_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(HWY_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
-set(HWY_ENABLE_CONTRIB ON CACHE BOOL "" FORCE) # contrib math/dot kernels
-FetchContent_Declare(highway
-    GIT_REPOSITORY https://github.com/google/highway.git
-    GIT_TAG 1.4.0
-)
-FetchContent_MakeAvailable(highway)
+# Prefer a system install (fast in CI when cached); fall back to FetchContent and
+# build from source if none is found. The two paths expose different target names:
+# an installed Highway exports namespaced targets (hwy::hwy, hwy::hwy_contrib),
+# while FetchContent defines un-namespaced ones (hwy, hwy_contrib). HIGHWAY_LIBRARIES
+# captures whichever applies so the link line below stays the same.
+find_package(hwy QUIET)
+if(hwy_FOUND)
+    set(HIGHWAY_LIBRARIES hwy::hwy hwy::hwy_contrib)
+else()
+    include(FetchContent)
+    set(HWY_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+    set(HWY_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(HWY_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(HWY_ENABLE_CONTRIB ON CACHE BOOL "" FORCE) # contrib math/dot kernels
+    FetchContent_Declare(highway
+        GIT_REPOSITORY https://github.com/google/highway.git
+        GIT_TAG 1.4.0
+    )
+    FetchContent_MakeAvailable(highway)
+    set(HIGHWAY_LIBRARIES hwy hwy_contrib)
+endif()
 
 
 # LAPACKE — C interface to LAPACK, used by the dense Factorization wrappers.
@@ -126,12 +137,19 @@ target_include_directories(${PROJECT_NAME} INTERFACE
 
 # Propagate Highway to every consumer; array.hpp includes its headers. Marked
 # SYSTEM so the project's -Wall -Wextra -Wpedantic do not fire inside Highway.
-target_link_libraries(${PROJECT_NAME} INTERFACE hwy hwy_contrib Ginkgo::ginkgo
+target_link_libraries(${PROJECT_NAME} INTERFACE ${HIGHWAY_LIBRARIES} Ginkgo::ginkgo
     ${LAPACKE_LIBRARY} ${LAPACK_LIBRARIES})
 target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE
-    $<BUILD_INTERFACE:${highway_SOURCE_DIR}>
     ${LAPACKE_INCLUDE_DIR}
 )
+# An installed Highway is an IMPORTED target, so CMake already treats its include
+# dirs as SYSTEM. The FetchContent targets are not imported, so add Highway's
+# source dir explicitly as SYSTEM to keep our warnings out of its headers.
+if(NOT hwy_FOUND)
+    target_include_directories(${PROJECT_NAME} SYSTEM INTERFACE
+        $<BUILD_INTERFACE:${highway_SOURCE_DIR}>
+    )
+endif()
 
 # Ginkgo — the imported target carries its own usage requirements (include dirs,
 # device sub-libraries, MPI). Linking it propagates Ginkgo to every consumer.
