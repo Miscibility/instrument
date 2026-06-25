@@ -154,68 +154,55 @@ int main()
         };
     };
 
-    suite<"MPIReduce"> mpi_suite = [] {
-        test("serialize round-trips through a single-rank reduce") = [] {
+    suite<"ManualSpanErrors"> span_error_suite = [] {
+        test("stop with no open span warns and is a no-op") = [] {
             mi::reset();
-            {
-                mi::Timer<> t{"solve"};
-                busy(2.0);
-                {
-                    mi::Timer<> s{"spmv"};
-                    busy(3.0);
-                }
-            }
-            auto agg = mi::detail::aggregate();
-            const std::string blob = mi::detail::serialize(*agg);
-            auto red = mi::detail::reduce_blobs({blob}, 1);
-            // top-level node "solve" present, with nested "spmv".
-            expect(red.root->children.size() == 1_u);
-            expect(red.root->children[0]->name == std::string("solve"));
-            expect(red.root->children[0]->children.size() == 1_u);
-            expect(red.root->children[0]->children[0]->name == std::string("spmv"));
-            expect(red.denom > 0_u);
+            mi::stop("nothing"); // manual stack empty -> warning, returns
+            expect(not mi::query("nothing").has_value());
         };
 
-        test("cross-rank reduce sums times and exposes imbalance") = [] {
-            // Two ranks, same region, lopsided times: rank0=100ns, rank1=300ns.
-            // Blob line format is: name \t calls \t total_ns
-            const std::string r0 = "solve\t1\t100\n";
-            const std::string r1 = "solve\t1\t300\n";
-            auto red = mi::detail::reduce_blobs({r0, r1}, 2);
-            expect(red.root->children.size() == 1_u);
-            const auto& a = red.root->children[0]->agg;
-            expect(a.ranks_present == 2_i);
-            expect(a.calls_sum == 2_u);
-            expect(a.total_ns_sum == 400_u);
-            expect(a.total_ns_min == 100_u);
-            expect(a.total_ns_max == 300_u);
-            expect(red.denom == 400_u);
-            // mean = 400/2 = 200; imbalance = (max/mean - 1) = 0.5 => 50%.
-            const double mean = static_cast<double>(a.total_ns_sum) / 2.0;
-            const double imbal = ((static_cast<double>(a.total_ns_max) / mean) - 1.0) * 100.0;
-            expect(std::abs(imbal - 50.0) < 1e-9);
-        };
-
-        test("reduce unions regions that differ across ranks") = [] {
-            const std::string r0 = "assemble\t1\t50\n";
-            const std::string r1 = "exchange\t1\t70\n";
-            auto red = mi::detail::reduce_blobs({r0, r1}, 2);
-            expect(red.root->children.size() == 2_u) << "union of both ranks' regions";
-            expect(red.denom == 120_u);
-        };
-
-        test("reduce builds nested paths across ranks") = [] {
-            const std::string r0 = "solve\t1\t100\nsolve/spmv\t1\t60\n";
-            const std::string r1 = "solve\t1\t200\nsolve/spmv\t1\t120\n";
-            auto red = mi::detail::reduce_blobs({r0, r1}, 2);
-            expect(red.root->children.size() == 1_u);
-            const auto* solve = red.root->children[0].get();
-            expect(solve->name == std::string("solve"));
-            expect(solve->children.size() == 1_u);
-            expect(solve->children[0]->name == std::string("spmv"));
-            expect(solve->children[0]->agg.total_ns_sum == 180_u); // 60 + 120
+        test("stop with a mismatched name still closes the span") = [] {
+            mi::reset();
+            mi::start("opened");
+            busy(1.0);
+            mi::stop("something_else"); // name mismatch -> warning, closes anyway
+            auto s = mi::query("opened");
+            expect(s.has_value());
+            expect(s->calls == 1_u);
         };
     };
 
-    return 0;
+    suite<"QueryEdges"> query_edge_suite = [] {
+        test("query of an empty path returns nullopt") = [] {
+            mi::reset();
+            {
+                mi::Timer<> t{"region"};
+            }
+            expect(not mi::query("").has_value()) << "empty path resolves to the root";
+            expect(not mi::query("/").has_value());
+        };
+    };
+
+    suite<"Detail"> detail_suite = [] {
+        test("humanize scales across seconds/ms/us/ns") = [] {
+            using mi::detail::humanize;
+            expect(humanize(2.5).find(" s") != std::string::npos);   // >= 1 s
+            expect(humanize(2.5e-3).find("ms") != std::string::npos); // milliseconds
+            expect(humanize(2.5e-6).find("us") != std::string::npos); // microseconds
+            expect(humanize(2.5e-9).find("ns") != std::string::npos); // nanoseconds
+        };
+
+        test("indent_for emits nested markdown and plain indentation") = [] {
+            using mi::detail::indent_for;
+            using mi::Format;
+            expect(indent_for(1, Format::Markdown).empty()) << "top level has no indent";
+            expect(indent_for(2, Format::Markdown).find("&nbsp;") != std::string::npos);
+            expect(indent_for(2, Format::Plain).find("  ") != std::string::npos);
+        };
+    };
+
+    // MPI tests live in test_timing_mpi.cpp (guarded by MISCIBILITY_INSTRUMENT_WITH_MPI).
+
+    // The unit suite must run before main() returns so coverage counters are flushed.
+    return ::boost::ut::cfg<>.run();
 }
