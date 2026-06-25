@@ -42,18 +42,31 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_CXX_FLAGS_RELEASE": "-O3 -march=native -DNDEBUG -fno-math-errno -fno-trapping-math -fassociative-math -freciprocal-math"
       }
+    },
+    {
+      "name": "coverage",
+      "displayName": "Coverage",
+      "description": "Code coverage build, instrumented with gcov and built with MPI so the MPI code paths are measured too.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ENABLE_COVERAGE": "ON",
+        "INSTRUMENT_WITH_MPI": "ON"
+      }
     }
   ],
   "buildPresets": [
     { "name": "debug",       "configurePreset": "debug"       },
     { "name": "debug-tidy",  "configurePreset": "debug-tidy"  },
     { "name": "release",     "configurePreset": "release"     },
-    { "name": "release-max", "configurePreset": "release-max" }
+    { "name": "release-max", "configurePreset": "release-max" },
+    { "name": "coverage",    "configurePreset": "coverage"    }
   ],
   "testPresets": [
     { "name": "debug",       "configurePreset": "debug",       "output": { "outputOnFailure": true } },
     { "name": "debug-tidy",  "configurePreset": "debug-tidy",  "output": { "outputOnFailure": true } },
     { "name": "release",     "configurePreset": "release",     "output": { "outputOnFailure": true } },
-    { "name": "release-max", "configurePreset": "release-max", "output": { "outputOnFailure": true } }
+    { "name": "release-max", "configurePreset": "release-max", "output": { "outputOnFailure": true } },
+    { "name": "coverage",    "configurePreset": "coverage",    "output": { "outputOnFailure": true } }
   ]
 }
