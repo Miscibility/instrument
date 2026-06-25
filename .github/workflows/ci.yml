@@ -102,5 +102,6 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: build/coverage/coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
           slug: Miscibility/instrument
           fail_ci_if_error: true 
