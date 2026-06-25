@@ -8,12 +8,12 @@
 // special member, both const and non-const accessors, swap, and the always-engaged
 // property.
 
+#include "instrument/fast_pimpl.hpp"
+
 #include <boost/ut.hpp>
 #include <cstddef>
 #include <type_traits>
 #include <utility>
-
-#include "instrument/fast_pimpl.hpp"
 
 namespace ip = instrument;
 

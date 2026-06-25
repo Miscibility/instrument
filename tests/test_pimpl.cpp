@@ -7,11 +7,11 @@
 // const and non-const form, swap, the empty/moved-from state, and the
 // incomplete-type discipline.
 
+#include "instrument/pimpl.hpp"
+
 #include <boost/ut.hpp>
 #include <type_traits>
 #include <utility>
-
-#include "instrument/pimpl.hpp"
 
 namespace ip = instrument;
 
@@ -235,7 +235,9 @@ int main()
 
         test("copying an empty Pimpl yields an empty Pimpl") = [] {
             ip::Pimpl<Tracked> src;
-            { ip::Pimpl<Tracked> sink{std::move(src)}; } // src is now the empty one
+            {
+                ip::Pimpl<Tracked> sink{std::move(src)};
+            } // src is now the empty one
             expect(not static_cast<bool>(src));
             ip::Pimpl<Tracked> copy_of_empty{src};
             expect(not static_cast<bool>(copy_of_empty));
@@ -244,7 +246,9 @@ int main()
 
         test("copy-assigning from an empty source empties the target") = [] {
             ip::Pimpl<Tracked> empty;
-            { ip::Pimpl<Tracked> sink{std::move(empty)}; } // empty is now empty
+            {
+                ip::Pimpl<Tracked> sink{std::move(empty)};
+            } // empty is now empty
             ip::Pimpl<Tracked> target{std::in_place, 3};
             expect(static_cast<bool>(target));
             target = empty;
@@ -324,7 +328,9 @@ int main()
         test("ADL free swap works and swaps with an empty Pimpl") = [] {
             ip::Pimpl<Tracked> a{std::in_place, 5};
             ip::Pimpl<Tracked> b;
-            { ip::Pimpl<Tracked> sink{std::move(b)}; } // b empty
+            {
+                ip::Pimpl<Tracked> sink{std::move(b)};
+            } // b empty
             using std::swap;
             swap(a, b);
             expect(not static_cast<bool>(a));

@@ -8,11 +8,11 @@
 // const and non-const accessors, swap, the empty/moved-from state, and the
 // rule-of-zero discipline.
 
+#include "instrument/value_pimpl.hpp"
+
 #include <boost/ut.hpp>
 #include <type_traits>
 #include <utility>
-
-#include "instrument/value_pimpl.hpp"
 
 namespace ip = instrument;
 
@@ -191,7 +191,9 @@ int main()
 
         test("copying and copy-assigning an empty source stays empty") = [] {
             ip::ValuePimpl<Tracked> empty;
-            { ip::ValuePimpl<Tracked> sink{std::move(empty)}; } // empty now empty
+            {
+                ip::ValuePimpl<Tracked> sink{std::move(empty)};
+            } // empty now empty
             expect(not static_cast<bool>(empty));
             ip::ValuePimpl<Tracked> copy_of_empty{empty};
             expect(not static_cast<bool>(copy_of_empty)) << "clone of null is null";
@@ -202,7 +204,9 @@ int main()
 
         test("copy-assigning a value into an empty target engages it") = [] {
             ip::ValuePimpl<Tracked> empty;
-            { ip::ValuePimpl<Tracked> sink{std::move(empty)}; } // empty now empty
+            {
+                ip::ValuePimpl<Tracked> sink{std::move(empty)};
+            } // empty now empty
             expect(not static_cast<bool>(empty));
             ip::ValuePimpl<Tracked> src{std::in_place, 9};
             empty = src; // exercises the "no live object to destroy" branch
@@ -268,7 +272,9 @@ int main()
 
         test("move-assigning into an empty target does not double free") = [] {
             ip::ValuePimpl<Tracked> empty;
-            { ip::ValuePimpl<Tracked> sink{std::move(empty)}; } // empty now empty
+            {
+                ip::ValuePimpl<Tracked> sink{std::move(empty)};
+            } // empty now empty
             ip::ValuePimpl<Tracked> src{std::in_place, 4};
             empty = std::move(src);
             expect(static_cast<bool>(empty));
@@ -293,7 +299,9 @@ int main()
         test("ADL free swap works, including against an empty pimpl") = [] {
             ip::ValuePimpl<Tracked> a{std::in_place, 5};
             ip::ValuePimpl<Tracked> b;
-            { ip::ValuePimpl<Tracked> sink{std::move(b)}; } // b empty
+            {
+                ip::ValuePimpl<Tracked> sink{std::move(b)};
+            } // b empty
             using std::swap;
             swap(a, b);
             expect(not static_cast<bool>(a));
