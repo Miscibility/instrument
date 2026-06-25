@@ -6,14 +6,13 @@
 
 #ifdef MISCIBILITY_INSTRUMENT_WITH_MPI
 
+#include "instrument/timing.hpp"
+
 #include <boost/ut.hpp>
 #include <cmath>
+#include <mpi.h>
 #include <sstream>
 #include <string>
-
-#include <mpi.h>
-
-#include "instrument/timing.hpp"
 
 namespace mi = miscibility::instrument;
 

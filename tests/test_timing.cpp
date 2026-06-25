@@ -186,7 +186,7 @@ int main()
     suite<"Detail"> detail_suite = [] {
         test("humanize scales across seconds/ms/us/ns") = [] {
             using mi::detail::humanize;
-            expect(humanize(2.5).find(" s") != std::string::npos);   // >= 1 s
+            expect(humanize(2.5).find(" s") != std::string::npos);    // >= 1 s
             expect(humanize(2.5e-3).find("ms") != std::string::npos); // milliseconds
             expect(humanize(2.5e-6).find("us") != std::string::npos); // microseconds
             expect(humanize(2.5e-9).find("ns") != std::string::npos); // nanoseconds

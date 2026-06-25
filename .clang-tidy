@@ -19,7 +19,8 @@ Checks: >
   -misc-non-private-member-variables-in-classes,
   -misc-no-recursion,
   -bugprone-narrowing-conversion,
-  -bugprone-easily-swappable-parameters
+  -bugprone-easily-swappable-parameters,
+  -cppcoreguidelines-pro-type-reinterpret-cast
 
 WarningsAsErrors: ""
 HeaderFilterRegex: "include/.*"
