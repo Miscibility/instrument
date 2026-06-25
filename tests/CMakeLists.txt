@@ -22,19 +22,4 @@ foreach(test_source IN LISTS TEST_SOURCES)
         Boost::ut
     )
     add_test(NAME ${test_name} COMMAND ${test_name})
-    # Ginkgo's hwloc-backed machine_topology singleton is never freed, so
-    # LeakSanitizer flags it on every Ginkgo-using test; suppress those while
-    # keeping leak detection for our own code.
-    set_tests_properties(${test_name} PROPERTIES
-        ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan_suppressions.txt:print_suppressions=0"
-    )
 endforeach()
-
-# The Ginkgo smoke test triggers Ginkgo's hwloc machine_topology singleton, whose
-# process-lifetime allocations LeakSanitizer reports as leaks. Point LSan at a
-# suppression file for just this test so the sanitizer build stays green.
-if(TEST test_ginkgo_smoke)
-    set_tests_properties(test_ginkgo_smoke PROPERTIES
-        ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/ginkgo.supp"
-    )
-endif()

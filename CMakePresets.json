@@ -36,7 +36,7 @@
     {
       "name": "release-max",
       "displayName": "Release (max optimizations)",
-      "description": "If your domain guarantees no NaN or Inf can ever appear, add -ffinite-math-only for additional gains. It lets the compiler eliminate all NaN/Inf guards, but produces silent wrong results if a NaN does appear — use only when you have a proof your inputs are finite. NOTE: -fno-signed-zeros is intentionally NOT used: combined with -fassociative-math it miscompiles Highway's vectorized log/log2/log10/log1p range reduction (which depends on signed-zero semantics), giving silently wrong results.",
+      "description": "If your domain guarantees no NaN or Inf can ever appear, add -ffinite-math-only for additional gains. It lets the compiler eliminate all NaN/Inf guards, but produces silent wrong results if a NaN does appear — use only when you have a proof your inputs are finite.",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
